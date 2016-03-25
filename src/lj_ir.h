@@ -522,7 +522,9 @@ typedef uint32_t TRef;
 ** +-------+-------+---+---+---+---+
 ** |  op1  |  op2  | t | o | r | s |
 ** +-------+-------+---+---+---+---+
-** |  op12/i/gco   |   ot  | prev  | (alternative fields in union)
+** |  op12/i/gco32 |   ot  | prev  | (alternative fields in union)
+** +-------+-------+---+---+---+---+
+** |  tvalue/gco64                 | (2nd IR slot for 64-bit constants)
 ** +---------------+-------+-------+
 **        32           16      16
 **
@@ -550,22 +552,23 @@ typedef union IRIns {
     )
   };
   int32_t i;		/* 32 bit signed integer literal (overlaps op12). */
-  GCRef gcr;		/* GCobj constant (overlaps op12). */
-  MRef ptr;		/* Pointer constant (overlaps op12). */
+  GCRef gcr;		/* GCobj constant (overlaps op12 or entire slot). */
+  MRef ptr;		/* Pointer constant (overlaps op12 or entire slot). */
+  TValue tv;		/* TValue constant (overlaps entire slot). */
 } IRIns;
 
-/* TODO_GC64: major changes required. */
-#define ir_kgc(ir)	check_exp((ir)->o == IR_KGC, gcref((ir)->gcr))
+#define ir_kgc(ir)	check_exp((ir)->o == IR_KGC, gcref((ir)[LJ_GC64].gcr))
 #define ir_kstr(ir)	(gco2str(ir_kgc((ir))))
 #define ir_ktab(ir)	(gco2tab(ir_kgc((ir))))
 #define ir_kfunc(ir)	(gco2func(ir_kgc((ir))))
 #define ir_kcdata(ir)	(gco2cd(ir_kgc((ir))))
-#define ir_knum(ir)	check_exp((ir)->o == IR_KNUM, mref((ir)->ptr, cTValue))
-#define ir_kint64(ir)	check_exp((ir)->o == IR_KINT64, mref((ir)->ptr,cTValue))
+#define ir_knum(ir)	check_exp((ir)->o == IR_KNUM, &(ir)[1].tv)
+#define ir_kint64(ir)	check_exp((ir)->o == IR_KINT64, &(ir)[1].tv)
 #define ir_k64(ir) \
-  check_exp((ir)->o == IR_KNUM || (ir)->o == IR_KINT64, mref((ir)->ptr,cTValue))
+  check_exp((ir)->o == IR_KNUM || (ir)->o == IR_KINT64, &(ir)[1].tv)
 #define ir_kptr(ir) \
-  check_exp((ir)->o == IR_KPTR || (ir)->o == IR_KKPTR, mref((ir)->ptr, void))
+  check_exp((ir)->o == IR_KPTR || (ir)->o == IR_KKPTR, \
+    mref((ir)[LJ_GC64].ptr, void))
 
 /* A store or any other op with a non-weak guard has a side-effect. */
 static LJ_AINLINE int ir_sideeff(IRIns *ir)

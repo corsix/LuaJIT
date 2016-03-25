@@ -69,7 +69,7 @@ typedef struct ASMState {
   IRRef orignins;	/* Original T->nins. */
 
   IRRef snapref;	/* Current snapshot is active after this reference. */
-  IRRef snaprename;	/* Rename highwater mark for snapshot check. */
+  uint8_t snaprename;	/* Rename highwater mark for snapshot check. */
   SnapNo snapno;	/* Current snapshot number. */
   SnapNo loopsnapno;	/* Loop snapshot number. */
 
@@ -334,7 +334,7 @@ static Reg ra_rematk(ASMState *as, IRRef ref)
   RA_DBGX((as, "remat     $i $r", ir, r));
 #if !LJ_SOFTFP
   if (ir->o == IR_KNUM) {
-    emit_loadn(as, r, ir_knum(ir));
+    emit_loadk64(as, r, ir);
   } else
 #endif
   if (emit_canremat(REF_BASE) && ir->o == IR_BASE) {
@@ -619,10 +619,22 @@ static Reg ra_alloc1(ASMState *as, IRRef ref, RegSet allow)
   return r;
 }
 
+/* Add a register rename to as's rename list. */
+static void ra_addrename(ASMState *as, Reg down, IRRef ref, SnapNo snapno)
+{
+  RegRename *rr = &as->J->renames[as->T->nrenames];
+  lua_assert((snapno & 0x3ff) == snapno);
+  lua_assert((down & 0x3f) == down);
+  if (!++as->T->nrenames)
+    lj_trace_err(as->J, LJ_TRERR_RENAMOV);
+  rr->ref = ref;
+  rr->rsnap = (uint16_t)(snapno | (down << 10));
+}
+
 /* Rename register allocation and emit move. */
 static void ra_rename(ASMState *as, Reg down, Reg up)
 {
-  IRRef ren, ref = regcost_ref(as->cost[up] = as->cost[down]);
+  IRRef ref = regcost_ref(as->cost[up] = as->cost[down]);
   IRIns *ir = IR(ref);
   ir->r = (uint8_t)up;
   as->cost[down] = 0;
@@ -635,11 +647,7 @@ static void ra_rename(ASMState *as, Reg down, Reg up)
   RA_DBGX((as, "rename    $f $r $r", regcost_ref(as->cost[up]), down, up));
   emit_movrr(as, ir, down, up);  /* Backwards codegen needs inverse move. */
   if (!ra_hasspill(IR(ref)->s)) {  /* Add the rename to the IR. */
-    lj_ir_set(as->J, IRT(IR_RENAME, IRT_NIL), ref, as->snapno);
-    ren = tref_ref(lj_ir_emit(as->J));
-    as->ir = as->T->ir;  /* The IR may have been reallocated. */
-    IR(ren)->r = (uint8_t)down;
-    IR(ren)->s = SPS_NONE;
+    ra_addrename(as, down, ref, as->snapno);
   }
 }
 
@@ -689,16 +697,20 @@ static void ra_left(ASMState *as, Reg dest, IRRef lref)
   if (ra_noreg(left)) {
     if (irref_isk(lref)) {
       if (ir->o == IR_KNUM) {
-	cTValue *tv = ir_knum(ir);
 	/* FP remat needs a load except for +0. Still better than eviction. */
-	if (tvispzero(tv) || !(as->freeset & RSET_FPR)) {
-	  emit_loadn(as, dest, tv);
+	if (tvispzero(ir_knum(ir)) || !(as->freeset & RSET_FPR)) {
+	  emit_loadk64(as, dest, ir);
 	  return;
 	}
 #if LJ_64
       } else if (ir->o == IR_KINT64) {
-	emit_loadu64(as, dest, ir_kint64(ir)->u64);
+	emit_loadk64(as, dest, ir);
 	return;
+#if LJ_GC64
+      } else if (ir->o == IR_KGC || ir->o == IR_KPTR || ir->o == IR_KKPTR) {
+	emit_loadk64(as, dest, ir);
+	return;
+#endif
 #endif
       } else if (ir->o != IR_KPRI) {
 	lua_assert(ir->o == IR_KINT || ir->o == IR_KGC ||
@@ -937,14 +949,18 @@ static void asm_snap_prep(ASMState *as)
       as->snapref = as->T->snap[as->snapno].ref;
     } while (as->curins < as->snapref);
     asm_snap_alloc(as);
-    as->snaprename = as->T->nins;
+    as->snaprename = as->T->nrenames;
   } else {
     /* Process any renames above the highwater mark. */
-    for (; as->snaprename < as->T->nins; as->snaprename++) {
-      IRIns *ir = IR(as->snaprename);
-      if (asm_snap_checkrename(as, ir->op1))
-	ir->op2 = REF_BIAS-1;  /* Kill rename. */
+    uint32_t o, i, nrenames = as->T->nrenames;
+    for (o = i = as->snaprename; i < nrenames; i++) {
+      if (asm_snap_checkrename(as, as->J->renames[i].ref)) {
+	/* Drop rename. */
+      } else {
+	as->J->renames[o++] = as->J->renames[i];
+      }
     }
+    as->snaprename = as->T->nrenames = (uint8_t)o;
   }
 }
 
@@ -1472,12 +1488,7 @@ static void asm_phi_fixup(ASMState *as)
       irt_clearmark(ir->t);
       /* Left PHI gained a spill slot before the loop? */
       if (ra_hasspill(ir->s)) {
-	IRRef ren;
-	lj_ir_set(as->J, IRT(IR_RENAME, IRT_NIL), lref, as->loopsnapno);
-	ren = tref_ref(lj_ir_emit(as->J));
-	as->ir = as->T->ir;  /* The IR may have been reallocated. */
-	IR(ren)->r = (uint8_t)r;
-	IR(ren)->s = SPS_NONE;
+	ra_addrename(as, r, lref, as->loopsnapno);
       }
     }
     rset_clear(work, r);
@@ -1949,6 +1960,9 @@ static void asm_setup_regsp(ASMState *as)
   int sink = T->sinktags;
   IRRef nins = T->nins;
   IRIns *ir, *lastir;
+#if! LJ_GC64
+  IRIns *ktrace = IR(as->J->ktrace);
+#endif
   int inloop;
 #if LJ_TARGET_ARM
   uint32_t rload = 0xa6402a64;
@@ -1957,18 +1971,26 @@ static void asm_setup_regsp(ASMState *as)
   ra_setup(as);
 
   /* Clear reg/sp for constants. */
-  for (ir = IR(T->nk), lastir = IR(REF_BASE); ir < lastir; ir++)
+  for (ir = IR(T->nk), lastir = IR(REF_BASE); ir < lastir; ir++) {
     ir->prev = REGSP_INIT;
+    if (irt_is64(ir->t) && ir->o != IR_KNULL) {
+#if LJ_GC64
+      ir->i = 0; /* Will become non-zero if assigned a rip-rel address. */
+#else
+      if (ir == ktrace) continue;
+      /* Make life easier for backends by putting address of constant in i. */
+      ir->i = (int32_t)(intptr_t)(ir+1);
+#endif
+      ir++;
+    }
+  }
 
   /* REF_BASE is used for implicit references to the BASE register. */
   lastir->prev = REGSP_HINT(RID_BASE);
 
   ir = IR(nins-1);
-  if (ir->o == IR_RENAME) {
-    do { ir--; nins--; } while (ir->o == IR_RENAME);
-    T->nins = nins;  /* Remove any renames left over from ASM restart. */
-  }
-  as->snaprename = nins;
+  T->nrenames = 0;  /* Remove any renames left over from ASM restart. */
+  as->snaprename = 0;
   as->snapref = nins;
   as->snapno = T->nsnap;
 
@@ -2199,19 +2221,19 @@ void lj_asm_trace(jit_State *J, GCtrace *T)
   ASMState *as = &as_;
   MCode *origtop;
 
-  /* Ensure an initialized instruction beyond the last one for HIOP checks. */
-  J->cur.nins = lj_ir_nextins(J);
-  J->cur.ir[J->cur.nins].o = IR_NOP;
-
   /* Setup initial state. Copy some fields to reduce indirections. */
   as->J = J;
   as->T = T;
-  as->ir = T->ir;
+  as->ir = J->curfinal->ir; /* IR addresses get referenced by mcode. */
   as->flags = J->flags;
   as->loopref = J->loopref;
   as->realign = NULL;
   as->loopinv = 0;
   as->parent = J->parent ? traceref(J, J->parent) : NULL;
+
+  /* Ensure an initialized instruction beyond the last one for HIOP checks. */
+  lua_assert(T->nsnap != 0); /* Re-appropriating memory reserved for snaps. */
+  as->ir[J->cur.nins].o = IR_NOP;
 
   /* Reserve MCode memory. */
   as->mctop = origtop = lj_mcode_reserve(J, &as->mcbot);
@@ -2281,6 +2303,15 @@ void lj_asm_trace(jit_State *J, GCtrace *T)
     asm_tail_fixup(as, T->link);  /* Note: this may change as->mctop! */
   T->szmcode = (MSize)((char *)as->mctop - (char *)as->mcp);
   lj_mcode_sync(T->mcode, origtop);
+
+  /* Save register renames. */
+  if (T->nrenames) {
+    size_t i = T->nrenames;
+    RegRename *renames = (RegRename*)as->mcp - i;
+    as->mcp = (MCode*)renames;
+    if (LJ_UNLIKELY(as->mcp < as->mclim)) asm_mclimit(as);
+    do { --i; renames[i] = J->renames[i]; } while (i);
+  }
 }
 
 #undef IR

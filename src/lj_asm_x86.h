@@ -205,8 +205,13 @@ static void asm_fuseahuref(ASMState *as, IRRef ref, RegSet allow)
 static void asm_fusefref(ASMState *as, IRIns *ir, RegSet allow)
 {
   lua_assert(ir->o == IR_FLOAD || ir->o == IR_FREF);
-  as->mrm.ofs = field_ofs[ir->op2];
   as->mrm.idx = RID_NONE;
+  if (ir->op1 == REF_NIL) {
+    as->mrm.ofs = (int32_t)ir->op2 + ptr2addr(J2GG(as->J));
+    as->mrm.base = RID_NONE;
+    return;
+  }
+  as->mrm.ofs = field_ofs[ir->op2];
   if (irref_isk(ir->op1)) {
     as->mrm.ofs += IR(ir->op1)->i;
     as->mrm.base = RID_NONE;
@@ -301,6 +306,16 @@ static void asm_fusexref(ASMState *as, IRRef ref, RegSet allow)
   }
 }
 
+/* Fuse load of 64-bit IR constant into memory operand. */
+static Reg asm_fuseloadk64(ASMState *as, IRIns *ir)
+{
+  const uint64_t *k = &ir[1].tv.u64;
+  as->mrm.ofs = ptr2addr(k);
+  as->mrm.base = RID_NONE;
+  as->mrm.idx = RID_NONE;
+  return RID_MRM;
+}
+
 /* Fuse load into memory operand. */
 static Reg asm_fuseload(ASMState *as, IRRef ref, RegSet allow)
 {
@@ -320,19 +335,13 @@ static Reg asm_fuseload(ASMState *as, IRRef ref, RegSet allow)
   if (ir->o == IR_KNUM) {
     RegSet avail = as->freeset & ~as->modset & RSET_FPR;
     lua_assert(allow != RSET_EMPTY);
-    if (!(avail & (avail-1))) {  /* Fuse if less than two regs available. */
-      as->mrm.ofs = ptr2addr(ir_knum(ir));
-      as->mrm.base = as->mrm.idx = RID_NONE;
-      return RID_MRM;
-    }
+    if (!(avail & (avail-1)))  /* Fuse if less than two regs available. */
+      return asm_fuseloadk64(as, ir);
   } else if (ir->o == IR_KINT64) {
     RegSet avail = as->freeset & ~as->modset & RSET_GPR;
     lua_assert(allow != RSET_EMPTY);
-    if (!(avail & (avail-1))) {  /* Fuse if less than two regs available. */
-      as->mrm.ofs = ptr2addr(ir_kint64(ir));
-      as->mrm.base = as->mrm.idx = RID_NONE;
-      return RID_MRM;
-    }
+    if (!(avail & (avail-1)))  /* Fuse if less than two regs available. */
+      return asm_fuseloadk64(as, ir);
   } else if (mayfuse(as, ref)) {
     RegSet xallow = (allow & RSET_GPR) ? allow : RSET_GPR;
     if (ir->o == IR_SLOAD) {
@@ -368,6 +377,10 @@ static Reg asm_fuseload(ASMState *as, IRRef ref, RegSet allow)
       asm_fuseahuref(as, ir->op1, xallow);
       return RID_MRM;
     }
+  }
+  if (ir->o == IR_FLOAD && ir->op1 == REF_NIL) {
+    asm_fusefref(as, ir, RSET_EMPTY);
+    return RID_MRM;
   }
   if (!(as->freeset & allow) && !irref_isk(ref) &&
       (allow == RSET_EMPTY || ra_hasspill(ir->s) || iscrossref(as, ref)))
@@ -696,13 +709,13 @@ static void asm_conv(ASMState *as, IRIns *ir)
       if (left == dest) return;  /* Avoid the XO_XORPS. */
     } else if (LJ_32 && st == IRT_U32) {  /* U32 to FP conversion on x86. */
       /* number = (2^52+2^51 .. u32) - (2^52+2^51) */
-      cTValue *k = lj_ir_k64_find(as->J, U64x(43380000,00000000));
+      cTValue *k = &as->J->k64[LJ_K64_TOBIT];
       Reg bias = ra_scratch(as, rset_exclude(RSET_FPR, dest));
       if (irt_isfloat(ir->t))
 	emit_rr(as, XO_CVTSD2SS, dest, dest);
       emit_rr(as, XO_SUBSD, dest, bias);  /* Subtract 2^52+2^51 bias. */
       emit_rr(as, XO_XORPS, dest, bias);  /* Merge bias and integer. */
-      emit_loadn(as, bias, k);
+      emit_rma(as, XO_MOVSD, bias, k);
       emit_mrm(as, XO_MOVD, dest, asm_fuseload(as, lref, RSET_GPR));
       return;
     } else {  /* Integer to FP conversion. */
@@ -711,7 +724,7 @@ static void asm_conv(ASMState *as, IRIns *ir)
 		 asm_fuseloadm(as, lref, RSET_GPR, st64);
       if (LJ_64 && st == IRT_U64) {
 	MCLabel l_end = emit_label(as);
-	const void *k = lj_ir_k64_find(as->J, U64x(43f00000,00000000));
+	cTValue *k = &as->J->k64[LJ_K64_2P64];
 	emit_rma(as, XO_ADDSD, dest, k);  /* Add 2^64 to compensate. */
 	emit_sjcc(as, CC_NS, l_end);
 	emit_rr(as, XO_TEST, left|REX_64, left);  /* Check if u64 >= 2^63. */
@@ -738,11 +751,11 @@ static void asm_conv(ASMState *as, IRIns *ir)
 	  emit_gri(as, XG_ARITHi(XOg_ADD), dest, (int32_t)0x80000000);
 	emit_rr(as, op, dest|REX_64, tmp);
 	if (st == IRT_NUM)
-	  emit_rma(as, XO_ADDSD, tmp, lj_ir_k64_find(as->J,
-		   LJ_64 ? U64x(c3f00000,00000000) : U64x(c1e00000,00000000)));
+	  emit_rma(as, XO_ADDSD, tmp, &as->J->k64[
+		   LJ_64 ? LJ_K64_M2P64 : LJ_K64_M2P31]);
 	else
-	  emit_rma(as, XO_ADDSS, tmp, lj_ir_k64_find(as->J,
-		   LJ_64 ? U64x(00000000,df800000) : U64x(00000000,cf000000)));
+	  emit_rma(as, XO_ADDSS, tmp, &as->J->k32[
+		   LJ_64 ? LJ_K32_M2P64 : LJ_K32_M2P31]);
 	emit_sjcc(as, CC_NS, l_end);
 	emit_rr(as, XO_TEST, dest|REX_64, dest);  /* Check if dest negative. */
 	emit_rr(as, op, dest|REX_64, tmp);
@@ -828,8 +841,7 @@ static void asm_conv_fp_int64(ASMState *as, IRIns *ir)
   if (((ir-1)->op2 & IRCONV_SRCMASK) == IRT_U64) {
     /* For inputs in [2^63,2^64-1] add 2^64 to compensate. */
     MCLabel l_end = emit_label(as);
-    emit_rma(as, XO_FADDq, XOg_FADDq,
-	     lj_ir_k64_find(as->J, U64x(43f00000,00000000)));
+    emit_rma(as, XO_FADDq, XOg_FADDq, &as->J->k64[LJ_K64_2P64]);
     emit_sjcc(as, CC_NS, l_end);
     emit_rr(as, XO_TEST, hi, hi);  /* Check if u64 >= 2^63. */
   } else {
@@ -869,8 +881,7 @@ static void asm_conv_int64_fp(ASMState *as, IRIns *ir)
       emit_rmro(as, XO_FISTTPq, XOg_FISTTPq, RID_ESP, 0);
     else
       emit_rmro(as, XO_FISTPq, XOg_FISTPq, RID_ESP, 0);
-    emit_rma(as, XO_FADDq, XOg_FADDq,
-	     lj_ir_k64_find(as->J, U64x(c3f00000,00000000)));
+    emit_rma(as, XO_FADDq, XOg_FADDq, &as->J->k64[LJ_K64_M2P64]);
     emit_sjcc(as, CC_NS, l_pop);
     emit_rr(as, XO_TEST, hi, hi);  /* Check if out-of-range (2^63). */
   }

@@ -238,7 +238,7 @@ typedef struct GCtrace {
   TraceNo1 nextroot;	/* Next root trace for same prototype. */
   TraceNo1 nextside;	/* Next side trace of same root trace. */
   uint8_t sinktags;	/* Trace has SINK tags. */
-  uint8_t unused1;
+  uint8_t nrenames;	/* Number of register renames (stored before mcode). */
 #ifdef LUAJIT_USE_GDBJIT
   void *gdbjit_entry;	/* GDB JIT entry. */
 #endif
@@ -312,6 +312,24 @@ enum {
 #define LJ_KSIMD(J, n) \
   ((TValue *)(((intptr_t)&J->ksimd[2*(n)] + 15) & ~(intptr_t)15))
 
+enum {
+  LJ_K64_TOBIT,	  /* 2^52+2^51 */
+  LJ_K64_2P64,	  /* 2^64 */
+  LJ_K64_M2P64,	  /* -2^64 */
+  LJ_K64_M2P31,	  /* -2^31 */
+  LJ_K64_4F,
+  LJ_K64_4F_4F,
+  LJ_K64_41E,
+  LJ_K64_TOINTG,
+  LJ_K64__MAX
+};
+
+enum {
+  LJ_K32_M2P64,	  /* -2^64 */
+  LJ_K32_M2P31,	  /* -2^31 */
+  LJ_K32__MAX
+};
+
 /* Set/reset flag to activate the SPLIT pass for the current trace. */
 #if LJ_SOFTFP || (LJ_32 && LJ_HASFFI)
 #define lj_needsplit(J)		(J->needsplit = 1)
@@ -324,13 +342,20 @@ enum {
 /* Fold state is used to fold instructions on-the-fly. */
 typedef struct FoldState {
   IRIns ins;		/* Currently emitted instruction. */
-  IRIns left;		/* Instruction referenced by left operand. */
-  IRIns right;		/* Instruction referenced by right operand. */
+  IRIns left[2];	/* Instruction referenced by left operand. */
+  IRIns right[2];	/* Instruction referenced by right operand. */
 } FoldState;
+
+/* Record of renamed register. */
+typedef struct RegRename {
+  IRRef1 ref;		/* IR reference. */
+  uint16_t rsnap;	/* Snapshot number (low 10 bits) and reg (6 bits). */
+} RegRename;
 
 /* JIT compiler state. */
 typedef struct jit_State {
   GCtrace cur;		/* Current trace. */
+  GCtrace *curfinal;	/* Final address of current trace. */
 
   lua_State *L;		/* Current Lua state. */
   const BCIns *pc;	/* Current PC. */
@@ -360,8 +385,9 @@ typedef struct jit_State {
   int32_t framedepth;	/* Current frame depth. */
   int32_t retdepth;	/* Return frame depth (count of RETF). */
 
-  MRef k64;		/* Pointer to chained array of 64 bit constants. */
   TValue ksimd[LJ_KSIMD__MAX*2+1];  /* 16 byte aligned SIMD constants. */
+  TValue k64[LJ_K64__MAX];  /* Common 8 byte constants used by assemblers. */
+  uint32_t k32[LJ_K32__MAX];  /* Ditto for 4 byte constants. */
 
   IRIns *irbuf;		/* Temp. IR instruction buffer. Biased with REF_BIAS. */
   IRRef irtoplim;	/* Upper limit of instuction buffer (biased). */
@@ -382,10 +408,13 @@ typedef struct jit_State {
   GCRef *trace;		/* Array of traces. */
   TraceNo freetrace;	/* Start of scan for next free trace. */
   MSize sizetrace;	/* Size of trace array. */
-  TValue *ktracep;	/* Pointer to K64Array slot with GCtrace pointer. */
+  IRRef1 ktrace;	/* Reference to KGC with GCtrace. */
 
   IRRef1 chain[IR__MAX];  /* IR instruction skip-list chain anchors. */
+  union {
   TRef slot[LJ_MAX_JSLOTS+LJ_STACK_EXTRA];  /* Stack slot map. */
+  RegRename renames[255]; /* Register renames accumulated during ASM. */
+  };
 
   int32_t param[JIT_P__MAX];  /* JIT engine parameters. */
 

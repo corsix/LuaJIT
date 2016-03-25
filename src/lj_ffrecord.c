@@ -118,9 +118,7 @@ static void recff_stitch(jit_State *J)
   /* Ditto for the IR. */
   memmove(&J->base[1], &J->base[-1], sizeof(TRef)*(J->maxslot+1));
   J->base[0] = lj_ir_kptr(J, contptr(cont)) | TREF_CONT;
-  J->ktracep = lj_ir_k64_reserve(J);
-  lua_assert(irt_toitype_(IRT_P64) == LJ_TTRACE);
-  J->base[-1] = emitir(IRT(IR_XLOAD, IRT_P64), lj_ir_kptr(J, &J->ktracep->gcr), 0);
+  J->ktrace = tref_ref((J->base[-1] = lj_ir_ktrace(J)));
   J->base += 2;
   J->baseslot += 2;
   J->framedepth++;
@@ -498,7 +496,7 @@ static void LJ_FASTCALL recff_getfenv(jit_State *J, RecordFFData *rd)
 static void LJ_FASTCALL recff_math_abs(jit_State *J, RecordFFData *rd)
 {
   TRef tr = lj_ir_tonum(J, J->base[0]);
-  J->base[0] = emitir(IRTN(IR_ABS), tr, lj_ir_knum_abs(J));
+  J->base[0] = emitir(IRTN(IR_ABS), tr, lj_ir_ksimd(J, LJ_KSIMD_ABS));
   UNUSED(rd);
 }
 
