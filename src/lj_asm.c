@@ -1750,24 +1750,16 @@ static void asm_head_root(ASMState *as)
   as->T->topslot = gcref(as->T->startpt)->pt.framesize;
 }
 
-/* Head of a side trace.
-**
-** The current simplistic algorithm requires that all slots inherited
-** from the parent are live in a register between pass 2 and pass 3. This
-** avoids the complexity of stack slot shuffling. But of course this may
-** overflow the register set in some cases and cause the dreaded error:
-** "NYI: register coalescing too complex". A refined algorithm is needed.
-*/
+/* Head of a side trace. */
 static void asm_head_side(ASMState *as)
 {
-  IRRef1 sloadins[RID_MAX];
-  RegSet allow = RSET_ALL;  /* Inverse of all coalesced registers. */
-  RegSet live = RSET_EMPTY;  /* Live parent registers. */
+  IRRef1 sloadins[RID_MAX + 256];
+  RegSet allow = RSET_ALL;
   IRIns *irp = &as->parent->ir[REF_BASE];  /* Parent base. */
   int32_t spadj, spdelta;
-  int pass2 = 0;
-  int pass3 = 0;
   IRRef i;
+  RegSet todor = RSET_EMPTY; /* Bitmask of registers in sloadins. */
+  uint32_t todos = 0;  /* Number of spill slot entries in sloadins. */
 
   if (as->snapno && as->topslot > as->parent->topslot) {
     /* Force snap #0 alloc to prevent register overwrite in stack check. */
@@ -1776,7 +1768,7 @@ static void asm_head_side(ASMState *as)
   }
   allow = asm_head_side_base(as, irp, allow);
 
-  /* Scan all parent SLOADs and collect register dependencies. */
+  /* Scan all parent SLOADs and collect dependencies. */
   for (i = as->stopins; i > REF_BASE; i--) {
     IRIns *ir = IR(i);
     RegSP rs;
@@ -1784,23 +1776,20 @@ static void asm_head_side(ASMState *as)
 	       (LJ_SOFTFP && ir->o == IR_HIOP) || ir->o == IR_PVAL);
     rs = as->parentmap[i - REF_FIRST];
     if (ra_hasreg(ir->r)) {
+      lua_assert(!rset_test(todor, ir->r));
       rset_clear(allow, ir->r);
+      rset_set(todor, ir->r);
+      sloadins[ir->r] = (IRRef1)i;
       if (ra_hasspill(ir->s)) {
 	ra_save(as, ir, ir->r);
 	checkmclim(as);
       }
     } else if (ra_hasspill(ir->s)) {
-      irt_setmark(ir->t);
-      pass2 = 1;
-    }
-    if (ir->r == rs) {  /* Coalesce matching registers right now. */
-      ra_free(as, ir->r);
-    } else if (ra_hasspill(regsp_spill(rs))) {
-      if (ra_hasreg(ir->r))
-	pass3 = 1;
-    } else if (ra_used(ir)) {
-      sloadins[rs] = (IRRef1)i;
-      rset_set(live, rs);  /* Block live parent register. */
+      lua_assert(ir->s >= todos || sloadins[RID_MAX + ir->s] == REF_DROP);
+      while (todos <= ir->s) {
+        sloadins[RID_MAX + todos++] = REF_DROP;  /* Mark as empty. */
+      }
+      sloadins[RID_MAX + ir->s] = (IRRef1)i;
     }
   }
 
@@ -1813,35 +1802,122 @@ static void asm_head_side(ASMState *as)
   }
   as->T->spadjust = (uint16_t)spadj;
 
-  /* Reload spilled target registers. */
-  if (pass2) {
-    for (i = as->stopins; i > REF_BASE; i--) {
-      IRIns *ir = IR(i);
-      if (irt_ismarked(ir->t)) {
-	RegSet mask;
-	Reg r;
-	RegSP rs;
-	irt_clearmark(ir->t);
-	rs = as->parentmap[i - REF_FIRST];
-	if (!ra_hasspill(regsp_spill(rs)))
-	  ra_sethint(ir->r, rs);  /* Hint may be gone, set it again. */
-	else if (sps_scale(regsp_spill(rs))+spdelta == sps_scale(ir->s))
-	  continue;  /* Same spill slot, do nothing. */
-	mask = ((!LJ_SOFTFP && irt_isfp(ir->t)) ? RSET_FPR : RSET_GPR) & allow;
-	if (mask == RSET_EMPTY)
-	  lj_trace_err(as->J, LJ_TRERR_NYICOAL);
-	r = ra_allocref(as, i, mask);
-	ra_save(as, ir, r);
-	rset_clear(allow, r);
-	if (r == rs) {  /* Coalesce matching registers right now. */
-	  ra_free(as, r);
-	  rset_clear(live, r);
-	} else if (ra_hasspill(regsp_spill(rs))) {
-	  pass3 = 1;
-	}
-	checkmclim(as);
+  /* Shuffle registers and/or spill slots around until we are done. */
+  while (todor != RSET_EMPTY || todos != 0) {
+    /* Choose something to do. */
+    uint32_t head = todos ? (RID_MAX + todos - 1) : rset_pickbot(todor);
+    /* Follow dependency chain. */
+    uint16_t chain[RID_MAX + 256 + 1];
+    uint32_t len = 0;
+    uint32_t tail = head;
+    int breaking = 0;
+    for (;;) {
+      RegSP rs = as->parentmap[sloadins[tail] - REF_FIRST];
+      lua_assert(len < RID_MAX + 256);
+      chain[len++] = (uint16_t)tail;
+      if (!ra_hasspill(regsp_spill(rs))) {
+        lua_assert(ra_hasreg(regsp_reg(rs)));
+        tail = regsp_reg(rs);
+        if (!rset_test(todor, tail)) {
+          break;
+        }
+      } else {
+        IRIns *ir = IR(sloadins[tail]);
+        uint32_t alt;
+        tail = RID_MAX + spdelta/sps_scale(1) + regsp_spill(rs);
+        alt = tail ^ 1;
+        if (alt < RID_MAX + todos && sloadins[alt] != REF_DROP) {
+          if (irt_is64(ir->t) != irt_is64(IR(sloadins[alt])->t)) {
+            /*
+            ** What was previously a pair of 4-byte spill slots is now a single
+            ** 8-byte spill slot (or vice versa). This requires some thought.
+            */
+            lj_trace_err(as->J, LJ_TRERR_NYICOAL);
+          }
+        }
+        if (tail >= RID_MAX + todos || sloadins[tail] == REF_DROP) {
+          break;
+        }
+      }
+      if (tail == head) {
+        /* The chain is actually a cycle. */ 
+        if (len == 1) {
+          /* The cycle is trivially resolved by doing nothing. */
+        } else {
+          /* Break the cycle by introducing a temporary. */
+          IRIns *ir = IR(sloadins[head]);
+          RegSet mask1 = as->freeset & allow;
+          RegSet mask2 = (!LJ_SOFTFP && irt_isfp(ir->t)) ? RSET_FPR : RSET_GPR;
+          if ((mask1 & mask2) != RSET_EMPTY) {
+            chain[len++] = tail;
+            tail = rset_pickbot(mask1 & mask2);
+            rset_clear(as->freeset, tail);
+            sloadins[tail] = sloadins[head];
+            chain[0] = tail;
+            breaking = 1;
+          } else {
+            /* TODO: Use G->tmptv as the temporary. */
+            lj_trace_err(as->J, LJ_TRERR_NYICOAL);
+          }
+        }
+        break;
       }
     }
+    /* Unwind the dependency chain. */
+    do {
+      uint32_t prev = chain[--len];
+      IRIns *ir = IR(sloadins[prev]);
+      if (prev < RID_MAX) {
+        if (tail < RID_MAX) {
+          if (prev != tail) {
+            emit_movrr(as, ir, prev, tail);
+          }
+        } else {
+	  emit_spload(as, ir, prev, sps_scale(tail - RID_MAX));
+        }
+        ra_free(as, prev);
+        rset_clear(todor, prev);
+      } else {
+        if (tail < RID_MAX) {
+          emit_spstore(as, ir, tail, sps_scale(prev - RID_MAX));
+        } else if (prev != tail) {
+          /* Stack-to-stack move - need to go via a temporary register. */
+          RegSet mask1 = as->freeset & allow;
+          RegSet mask2 = (!LJ_SOFTFP && irt_isfp(ir->t)) ? RSET_FPR : RSET_GPR;
+          if ((mask1 & mask2) != RSET_EMPTY) {
+            Reg r = rset_pickbot(mask1 & mask2);
+            emit_spstore(as, ir, r, sps_scale(prev - RID_MAX));
+            emit_spload(as, ir, r, sps_scale(tail - RID_MAX));
+#if LJ_64
+          } else if (mask1 != RSET_EMPTY) {
+            Reg r = rset_pickbot(mask1);
+            IRIns dummy;
+            dummy.t.irt = (uint8_t)(irt_is64(ir->t) ?
+              ((r & RSET_GPR) ? IRT_I64 : IRT_NUM) :
+              ((r & RSET_GPR) ? IRT_INT : IRT_FLOAT));
+            emit_spstore(as, &dummy, r, sps_scale(prev - RID_MAX));
+            emit_spload(as, &dummy, r, sps_scale(tail - RID_MAX));
+#endif
+          } else {
+            /* TODO: Spill something from mask2 to G->tmptv2. */
+            lj_trace_err(as->J, LJ_TRERR_NYICOAL);
+          }
+        }
+        sloadins[prev] = REF_DROP;
+        while (todos && sloadins[RID_MAX+todos-1] == REF_DROP) {
+          --todos;
+        }
+      }
+      if (tail < RID_MAX) {
+        if (breaking) {
+          breaking = 0;
+        } else {
+          rset_clear(allow, tail);  /* Block live parent register. */
+        }
+      }
+      checkmclim(as);
+      tail = prev;
+    } while (len);
   }
 
   /* Store trace number and adjust stack frame relative to the parent. */
@@ -1853,59 +1929,6 @@ static void asm_head_side(ASMState *as)
   if (ra_hasspill(irp->s))
     emit_spload(as, IR(REF_BASE), IR(REF_BASE)->r, sps_scale(irp->s));
 #endif
-
-  /* Restore target registers from parent spill slots. */
-  if (pass3) {
-    RegSet work = ~as->freeset & RSET_ALL;
-    while (work) {
-      Reg r = rset_pickbot(work);
-      IRRef ref = regcost_ref(as->cost[r]);
-      RegSP rs = as->parentmap[ref - REF_FIRST];
-      rset_clear(work, r);
-      if (ra_hasspill(regsp_spill(rs))) {
-	int32_t ofs = sps_scale(regsp_spill(rs));
-	ra_free(as, r);
-	emit_spload(as, IR(ref), r, ofs);
-	checkmclim(as);
-      }
-    }
-  }
-
-  /* Shuffle registers to match up target regs with parent regs. */
-  for (;;) {
-    RegSet work;
-
-    /* Repeatedly coalesce free live registers by moving to their target. */
-    while ((work = as->freeset & live) != RSET_EMPTY) {
-      Reg rp = rset_pickbot(work);
-      IRIns *ir = IR(sloadins[rp]);
-      rset_clear(live, rp);
-      rset_clear(allow, rp);
-      ra_free(as, ir->r);
-      emit_movrr(as, ir, ir->r, rp);
-      checkmclim(as);
-    }
-
-    /* We're done if no live registers remain. */
-    if (live == RSET_EMPTY)
-      break;
-
-    /* Break cycles by renaming one target to a temp. register. */
-    if (live & RSET_GPR) {
-      RegSet tmpset = as->freeset & ~live & allow & RSET_GPR;
-      if (tmpset == RSET_EMPTY)
-	lj_trace_err(as->J, LJ_TRERR_NYICOAL);
-      ra_rename(as, rset_pickbot(live & RSET_GPR), rset_pickbot(tmpset));
-    }
-    if (!LJ_SOFTFP && (live & RSET_FPR)) {
-      RegSet tmpset = as->freeset & ~live & allow & RSET_FPR;
-      if (tmpset == RSET_EMPTY)
-	lj_trace_err(as->J, LJ_TRERR_NYICOAL);
-      ra_rename(as, rset_pickbot(live & RSET_FPR), rset_pickbot(tmpset));
-    }
-    checkmclim(as);
-    /* Continue with coalescing to fix up the broken cycle(s). */
-  }
 
   /* Inherit top stack slot already checked by parent trace. */
   as->T->topslot = as->parent->topslot;
