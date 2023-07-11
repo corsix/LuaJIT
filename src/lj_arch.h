@@ -259,6 +259,9 @@
 #define LJ_ARCH_NAME		"arm64"
 #define LJ_ARCH_ENDIAN		LUAJIT_LE
 #endif
+#if !defined(LJ_ABI_ARM64E) && __arm64e__
+#define LJ_ABI_ARM64E		1
+#endif
 #define LJ_TARGET_ARM64		1
 #define LJ_TARGET_EHRETREG	0
 #define LJ_TARGET_EHRAREG	30

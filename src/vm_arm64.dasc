@@ -105,7 +105,35 @@
 |  ldp x..gpr2, x..gpr1, [sp, # SAVE_GPR_+(27-gpr1)*8]
 |.endmacro
 |
+|.if ARM64E
+|.macro _pacibsp
+|  pacibsp
+|.endmacro
+|.macro br_aaz, reg
+|  braaz reg
+|.endmacro
+|.macro blr_aaz, reg
+|  blraaz reg
+|.endmacro
+|.macro ret_ab
+|  retab
+|.endmacro
+|.else
+|.macro _pacibsp
+|.endmacro
+|.macro br_aaz, reg
+|  br reg
+|.endmacro
+|.macro blr_aaz, reg
+|  blr reg
+|.endmacro
+|.macro ret_ab
+|  ret
+|.endmacro
+|.endif
+|
 |.macro saveregs
+|  _pacibsp
 |  sub sp, sp, # CFRAME_SPACE
 |  stp fp, lr, [sp, # SAVE_FP_LR_]
 |  add fp, sp, # SAVE_FP_LR_
@@ -180,7 +208,7 @@
 |   decode_RA RA, INS
 |  ldr TMP0, [TMP1, #GG_G2DISP]
 |   decode_RD RC, INS
-|  br TMP0
+|  br_aaz TMP0
 |.endmacro
 |
 |// Instruction footer.
@@ -209,7 +237,7 @@
 |   decode_RA RA, INS
 |  ldr TMP0, [TMP1, #GG_G2DISP]
 |   add RA, BASE, RA, lsl #3
-|  br TMP0
+|  br_aaz TMP0
 |.endmacro
 |
 |.macro ins_call
@@ -356,7 +384,7 @@ static void build_subroutines(BuildCtx *ctx)
   |
   |->vm_leave_unw:
   |  restoreregs
-  |  ret
+  |  ret_ab
   |
   |6:
   |  bgt >7				// Less results wanted?
@@ -542,7 +570,7 @@ static void build_subroutines(BuildCtx *ctx)
   |   str RC, SAVE_CFRAME
   |  str TMP0, L->cframe		// Add our C frame to cframe chain.
   |    str L, GL->cur_L
-  |  blr CARG4			// (lua_State *L, lua_CFunction func, void *ud)
+  |  blr_aaz CARG4			// (lua_State *L, lua_CFunction func, void *ud)
   |  mov BASE, CRET1
   |   mov PC, #FRAME_CP
   |  cbnz BASE, <3			// Else continue with the call.
@@ -573,7 +601,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  ldr CARG3, LFUNC:CARG3->pc
   |  ldr KBASE, [CARG3, #PC2PROTO(k)]
   |  // BASE = base, RA = resultptr, CARG4 = meta base
-  |    br CARG1
+  |    br_aaz CARG1
   |
   |.if FFI
   |1:
@@ -1707,7 +1735,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  cmp TMP1, TMP2
   |   mov CARG1, L
   |  bhi >5				// Need to grow stack.
-  |   blr CARG3				// (lua_State *L)
+  |   blr_aaz CARG3				// (lua_State *L)
   |  // Either throws an error, or recovers and returns -1, 0 or nresults+1.
   |   ldr BASE, L->base
   |  cmp CRET1w, #0
@@ -1743,6 +1771,7 @@ static void build_subroutines(BuildCtx *ctx)
   |
   |->fff_gcstep:			// Call GC step function.
   |  // BASE = new base, RC = nargs*8
+  |  _pacibsp
   |   add CARG2, BASE, NARGS8:RC	// Calculate L->top.
   |  mov RA, lr
   |   stp BASE, CARG2, L->base
@@ -1754,7 +1783,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  mov lr, RA				// Help return address predictor.
   |  sub NARGS8:RC, CARG2, BASE		// Calculate nargs*8.
   |   and CFUNC:CARG3, CARG3, #LJ_GCVMASK
-  |  ret
+  |  ret_ab
   |
   |//-----------------------------------------------------------------------
   |//-- Special dispatch targets -------------------------------------------
@@ -1781,7 +1810,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  tbz TMP2w, #HOOK_ACTIVE_SHIFT, >1	// Hook already active?
   |5:  // Re-dispatch to static ins.
   |  ldr TMP0, [TMP1, #GG_G2DISP+GG_DISP2STATIC]
-  |  br TMP0
+  |  br_aaz TMP0
   |
   |->vm_inshook:			// Dispatch target for instr/line hooks.
   |  ldrb TMP2w, GL->hookmask
@@ -1807,7 +1836,7 @@ static void build_subroutines(BuildCtx *ctx)
   |   decode_RA RA, INS
   |  ldr TMP0, [TMP1, #GG_G2DISP+GG_DISP2STATIC]
   |   decode_RD RC, INS
-  |  br TMP0
+  |  br_aaz TMP0
   |
   |->cont_hook:				// Continue from hook yield.
   |  ldr CARG1, [CARG4, #-40]
@@ -1857,7 +1886,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  sub NARGS8:RC, TMP1, BASE
   |   ldr INSw, [PC, #-4]
   |  and LFUNC:CARG3, CARG3, #LJ_GCVMASK
-  |  br CRET1
+  |  br_aaz CRET1
   |
   |->cont_stitch:			// Trace stitching.
   |.if JIT
@@ -2020,7 +2049,7 @@ static void build_subroutines(BuildCtx *ctx)
   |   add RA, BASE, RA, lsl #3	// Yes: RA = BASE+framesize*8, RC = nargs*8
   |   and LFUNC:CARG3, CARG3, #LJ_GCVMASK
   |5:
-  |  br RB
+  |  br_aaz RB
   |
   |4:  // Check frame below fast function.
   |  ldr CARG1, [BASE, FRAME_PC]
@@ -2182,6 +2211,7 @@ static void build_subroutines(BuildCtx *ctx)
   |  // Caveat: needs special frame unwinding, see below.
   |.if FFI
   |  .type CCSTATE, CCallState, x19
+  |  _pacibsp
   |  stp x20, CCSTATE, [sp, #-32]!
   |  stp fp, lr, [sp, #16]
   |  add fp, sp, #16
@@ -2208,14 +2238,14 @@ static void build_subroutines(BuildCtx *ctx)
   |  ldp x6, x7, CCSTATE->gpr[6]
   |   ldp d6, d7, CCSTATE->fpr[6]
   |  ldr x8, CCSTATE->retp
-  |  blr TMP3
+  |  blr_aaz TMP3
   |  sub sp, fp, #16
   |  stp x0, x1, CCSTATE->gpr[0]
   |   stp d0, d1, CCSTATE->fpr[0]
   |   stp d2, d3, CCSTATE->fpr[2]
   |  ldp fp, lr, [sp, #16]
   |  ldp x20, CCSTATE, [sp], #32
-  |  ret
+  |  ret_ab
   |.endif
   |// Note: vm_ffi_call must be the last function in this object file!
   |
@@ -3786,11 +3816,19 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |   mov CARG2w, #0  // Traces on ARM64 don't store the trace #, so use 0.
     |  ldr TRACE:RC, [CARG1, RC, lsl #3]
     |   st_vmstate CARG2w
+    |.if ARM64E
+    |  ldr RA, TRACE:RC->mcauth
+    |.else
     |  ldr RA, TRACE:RC->mcode
+    |.endif
     |   str BASE, GL->jit_base
     |   str L, GL->tmpbuf.L
     |  sub sp, sp, #16	// See SPS_FIXED. Avoids sp adjust in every root trace.
+    |.if ARM64E
+    |  braa RA, RC
+    |.else
     |  br RA
+    |.endif
     |.endif
     break;
 
@@ -3901,7 +3939,7 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  mov CARG1, L
     |   bhi ->vm_growstack_c		// Need to grow stack.
     |    st_vmstate TMP0w
-    |  blr CARG4			// (lua_State *L [, lua_CFunction f])
+    |  blr_aaz CARG4			// (lua_State *L [, lua_CFunction f])
     |  // Returns nresults.
     |  ldp BASE, TMP1, L->base
     |    str L, GL->cur_L
