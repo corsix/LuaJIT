@@ -457,6 +457,88 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
   }
 }
 
+#if LJ_HASFFI && LJ_TARGET_OSX
+/* Generate a call to a C function, using OSX calling convention.
+**
+** This differs from asm_gencall for varargs (never passed in registers) and
+** for fixed arguments that end up passed on the stack (are _not_ padded up to
+** GPR width). Handling these differences requires that we have the type
+** signature of the called function available. Note that these differences can
+** only manifest for FFI calls; other calls are always fixed arguments, and
+** sufficiently few fixed arguments as to not require the stack.
+*/
+static void asm_gencallx_osx(ASMState *as, const CCallInfo *ci, IRRef *args, CTypeID ctid)
+{
+  uint32_t n, nargs = CCI_XNARGS(ci);
+  int32_t ofs = 0, fsz;
+  Reg gpr, fpr = REGARG_FIRSTFPR;
+  CTState *cts = ctype_ctsG(J2G(as->J));
+  CTypeID fid = ctype_get(cts, ctid)->sib;
+  while (fid) { /* Skip initial attributes. */
+    CType *ctf = ctype_get(cts, fid);
+    if (!ctype_isattrib(ctf->info)) break;
+    fid = ctf->sib;
+  }
+  if ((void *)ci->func)
+    emit_call(as, (void *)ci->func);
+  for (gpr = REGARG_FIRSTGPR; gpr <= REGARG_LASTGPR; gpr++)
+    as->cost[gpr] = REGCOST(~0u, ASMREF_L);
+  gpr = REGARG_FIRSTGPR;
+  for (n = 0; n < nargs; n++) { /* Setup args. */
+    IRRef ref = args[n];
+    IRIns *ir = IR(ref);
+    if (fid) {
+      CType *ctf = ctype_get(cts, fid);
+      CType *d;
+      int32_t align;
+      lj_assertA(ctype_isfield(ctf->info), "field expected");
+      d = ctype_raw(cts, ctype_cid(ctf->info));
+      fid = ctf->sib;
+      lj_assertA(ctype_hassize(d->info), "sized field expected");
+      align = (1 << ctype_align(d->info)) -1;
+      fsz = d->size;
+      ofs = (ofs + align) & ~align;
+    } else {
+      fsz = 8;
+      ofs = (ofs + 7) & ~(int32_t)7;
+      fpr = REGARG_LASTFPR+1;
+      gpr = REGARG_LASTGPR+1;
+    }
+    if (ref) {
+      if (irt_isfp(ir->t)) {
+	if (fpr <= REGARG_LASTFPR) {
+	  lj_assertA(rset_test(as->freeset, fpr),
+		     "reg %d not free", fpr);  /* Must have been evicted. */
+	  ra_leftov(as, fpr, ref);
+	  fpr++;
+	} else {
+	  Reg r = ra_alloc1(as, ref, RSET_FPR);
+	  lj_assertA(fsz >= 4, "size %d unexpected", fsz);
+	  emit_spstore(as, ir, r, ofs);
+	  ofs += fsz;
+	}
+      } else {
+	if (gpr <= REGARG_LASTGPR) {
+	  lj_assertA(rset_test(as->freeset, gpr),
+		     "reg %d not free", gpr);  /* Must have been evicted. */
+	  ra_leftov(as, gpr, ref);
+	  gpr++;
+	} else {
+	  Reg r = ra_alloc1(as, ref, RSET_GPR);
+          if (fsz >= 4) {
+	    emit_spstore(as, ir, r, ofs);
+          } else {
+            lj_assertA(fsz == 1 || fsz == 2, "size %d unexpected", fsz);
+            emit_lso(as, fsz == 1 ? A64I_STRB : A64I_STRH, r, RID_SP, ofs);
+          }
+	  ofs += fsz;
+	}
+      }
+    }
+  }
+}
+#endif
+
 /* Setup result reg/sp for call. Evict scratch regs. */
 static void asm_setupresult(ASMState *as, IRIns *ir, const CCallInfo *ci)
 {
@@ -492,11 +574,19 @@ static void asm_callx(ASMState *as, IRIns *ir)
   CCallInfo ci;
   IRRef func;
   IRIns *irf;
+#if LJ_HASFFI && LJ_TARGET_OSX
+  CTypeID ctid = 0;
+#endif
   ci.flags = asm_callx_flags(as, ir);
   asm_collectargs(as, ir, &ci, args);
   asm_setupresult(as, ir, &ci);
   func = ir->op2; irf = IR(func);
-  if (irf->o == IR_CARG) { func = irf->op1; irf = IR(func); }
+  if (irf->o == IR_CARG) {
+#if LJ_HASFFI && LJ_TARGET_OSX
+    ctid = (CTypeID)IR(irf->op2)->i;
+#endif
+    func = irf->op1; irf = IR(func);
+  }
   if (irref_isk(func)) {  /* Call to constant address. */
     ci.func = (ASMFunction)(ir_k64(irf)->u64);
   } else {  /* Need a non-argument register for indirect calls. */
@@ -504,6 +594,12 @@ static void asm_callx(ASMState *as, IRIns *ir)
     emit_n(as, A64I_BLR, freg);
     ci.func = (ASMFunction)(void *)0;
   }
+#if LJ_HASFFI && LJ_TARGET_OSX
+  if (ctid != 0) {
+    asm_gencallx_osx(as, &ci, args, ctid);
+    return;
+  }
+#endif
   asm_gencall(as, &ci, args);
 }
 
@@ -1978,8 +2074,22 @@ static Reg asm_setup_call_slots(ASMState *as, IRIns *ir, const CCallInfo *ci)
   IRRef args[CCI_NARGS_MAX*2];
   uint32_t i, nargs = CCI_XNARGS(ci);
   int nslots = 0, ngpr = REGARG_NUMGPR, nfpr = REGARG_NUMFPR;
+#if LJ_HASFFI && LJ_TARGET_OSX
+  uint32_t nfixedargs = nargs;
+  if ((ci->flags & CCI_VARARG)) {
+    CTypeID id = (CTypeID)IR(IR(ir->op2)->op2)->i;
+    CType *ct = ctype_get(ctype_ctsG(J2G(as->J)), id);
+    nfixedargs = ct->size;
+  }
+#endif
   asm_collectargs(as, ir, ci, args);
   for (i = 0; i < nargs; i++) {
+#if LJ_HASFFI && LJ_TARGET_OSX
+    if (i == nfixedargs) {
+      nfpr = 0;
+      ngpr = 0;
+    }
+#endif
     if (args[i] && irt_isfp(IR(args[i])->t)) {
       if (nfpr > 0) nfpr--; else nslots += 2;
     } else {

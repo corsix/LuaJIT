@@ -1249,6 +1249,8 @@ static int crec_call(jit_State *J, RecordFFData *rd, GCcdata *cd)
     if ((ct->info & CTF_VARARG)
 #if LJ_TARGET_X86
 	|| ctype_cconv(ct->info) != CTCC_CDECL
+#elif LJ_TARGET_ARM64 && LJ_TARGET_OSX
+	|| ct->size > 8 /* More than 8 args -> might pass some using stack. */
 #endif
 	)
       func = emitir(IRT(IR_CARG, IRT_NIL), func,
