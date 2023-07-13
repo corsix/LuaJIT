@@ -420,6 +420,7 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
 {
   uint32_t n, nargs = CCI_XNARGS(ci);
   int32_t ofs = 0;
+  int32_t align = LJ_HASFFI && LJ_TARGET_OSX ? 0 : 7;
   Reg gpr, fpr = REGARG_FIRSTFPR;
   if ((void *)ci->func)
     emit_call(as, (void *)ci->func);
@@ -438,8 +439,14 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
 	  fpr++;
 	} else {
 	  Reg r = ra_alloc1(as, ref, RSET_FPR);
-	  emit_spstore(as, ir, r, ofs + ((LJ_BE && !irt_isnum(ir->t)) ? 4 : 0));
-	  ofs += 8;
+	  int32_t sz1 = align;
+#if LJ_HASFFI && LJ_TARGET_OSX
+	  sz1 |= irt_isnum(ir->t) ? 7 : 3;
+#endif
+	  ofs = (ofs + sz1) & ~sz1;
+	  if (LJ_BE && sz1 >= 7 && !irt_isnum(ir->t)) ofs += 4, sz1 -= 4;
+	  emit_spstore(as, ir, r, ofs);
+	  ofs += sz1 + 1;
 	}
       } else {
 	if (gpr <= REGARG_LASTGPR) {
@@ -449,10 +456,28 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
 	  gpr++;
 	} else {
 	  Reg r = ra_alloc1(as, ref, RSET_GPR);
-	  emit_spstore(as, ir, r, ofs + ((LJ_BE && !irt_is64(ir->t)) ? 4 : 0));
-	  ofs += 8;
+	  int32_t sz1 = align;
+#if LJ_HASFFI && LJ_TARGET_OSX
+	  sz1 |= irt_size(ir->t) - 1;
+#endif
+	  ofs = (ofs + sz1) & ~sz1;
+	  if (sz1 >= 3) {
+	    if (LJ_BE && sz1 >= 7 && !irt_is64(ir->t)) ofs += 4, sz1 -= 4;
+	    emit_spstore(as, ir, r, ofs);
+	  } else {
+	    lj_assertA(sz1 == 0 || sz1 == 1, "size %d unexpected", sz1 + 1);
+	    emit_lso(as, sz1 ? A64I_STRH : A64I_STRB, r, RID_SP, ofs);
+	  }
+	  ofs += sz1 + 1;
 	}
       }
+#if LJ_HASFFI && LJ_TARGET_OSX
+    } else {
+      /* Was marker for end of fixed args. */
+      fpr = REGARG_LASTFPR+1;
+      gpr = REGARG_LASTGPR+1;
+      align = 7;
+#endif
     }
   }
 }
@@ -1975,19 +2000,45 @@ static void asm_tail_prep(ASMState *as)
 /* Ensure there are enough stack slots for call arguments. */
 static Reg asm_setup_call_slots(ASMState *as, IRIns *ir, const CCallInfo *ci)
 {
-  IRRef args[CCI_NARGS_MAX*2];
+#if LJ_HASFFI
   uint32_t i, nargs = CCI_XNARGS(ci);
-  int nslots = 0, ngpr = REGARG_NUMGPR, nfpr = REGARG_NUMFPR;
-  asm_collectargs(as, ir, ci, args);
-  for (i = 0; i < nargs; i++) {
-    if (args[i] && irt_isfp(IR(args[i])->t)) {
-      if (nfpr > 0) nfpr--; else nslots += 2;
-    } else {
-      if (ngpr > 0) ngpr--; else nslots += 2;
+  if (nargs > (REGARG_NUMGPR < REGARG_NUMFPR ? REGARG_NUMGPR : REGARG_NUMFPR)
+#if LJ_TARGET_OSX
+      || (ci->flags & CCI_VARARG)
+#endif
+      ) {
+    IRRef args[CCI_NARGS_MAX*2];
+    int ngpr = REGARG_NUMGPR, nfpr = REGARG_NUMFPR;
+    int align = LJ_TARGET_OSX ? 0 : 7, ofs = 0, nslots;
+    asm_collectargs(as, ir, ci, args);
+    for (i = 0; i < nargs; i++) {
+      int sz1 = align;
+      if (!args[i]) {
+#if LJ_TARGET_OSX
+	/* Was marker for end of fixed args. */
+	nfpr = 0;
+	ngpr = 0;
+	align = 7;
+#endif
+      } else if (irt_isfp(IR(args[i])->t)) {
+	if (nfpr > 0) { nfpr--; continue; }
+#if LJ_TARGET_OSX
+	sz1 |= irt_isnum(IR(args[i])->t) ? 7 : 3;
+#endif
+      } else {
+	if (ngpr > 0) { ngpr--; continue; }
+#if LJ_TARGET_OSX
+	sz1 |= irt_size(IR(args[i])->t) - 1;
+#endif
+      }
+      ofs = (ofs + sz1) & ~sz1;  /* Align stack. */
+      ofs += sz1 + 1;  /* Allocate argument. */
     }
+    nslots = (ofs + 3) >> 2;
+    if (nslots > as->evenspill)  /* Leave room for args in stack slots. */
+      as->evenspill = nslots;
   }
-  if (nslots > as->evenspill)  /* Leave room for args in stack slots. */
-    as->evenspill = nslots;
+#endif
   return REGSP_HINT(RID_RET);
 }
 

@@ -345,7 +345,6 @@
       goto done; \
     } else { \
       nfpr = CCALL_NARG_FPR;  /* Prevent reordering. */ \
-      if (LJ_TARGET_OSX && d->size < 8) goto err_nyi; \
     } \
   } else {  /* Try to pass argument in GPRs. */ \
     if (!LJ_TARGET_OSX && (d->info & CTF_ALIGN) > CTALIGN_PTR) \
@@ -356,7 +355,6 @@
       goto done; \
     } else { \
       ngpr = maxgpr;  /* Prevent reordering. */ \
-      if (LJ_TARGET_OSX && d->size < 8) goto err_nyi; \
     } \
   }
 
@@ -927,7 +925,12 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
   TValue *o, *top = L->top;
   CTypeID fid;
   CType *ctr;
-  MSize maxgpr, ngpr = 0, nsp = 0, narg;
+  MSize maxgpr, ngpr = 0, narg;
+#if CCALL_PACK_STACKARG
+  MSize nspb = 0;  /* Number of stack _bytes_ used. */
+#else
+  MSize nsp = 0;  /* Number of stack slots used. */
+#endif
 #if CCALL_NARG_FPR
   MSize nfpr = 0;
 #if LJ_TARGET_ARM
@@ -1019,15 +1022,35 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
       CCALL_HANDLE_STRUCTARG
     } else if (ctype_iscomplex(d->info)) {
       CCALL_HANDLE_COMPLEXARG
+#if CCALL_PACK_STACKARG
+    } else if (ctype_isenum(d->info)) {
+      /* d->size is correct for sz */
+#endif
     } else {
       sz = CTSIZE_PTR;
     }
-    sz = (sz + CTSIZE_PTR-1) & ~(CTSIZE_PTR-1);
-    n = sz / CTSIZE_PTR;  /* Number of GPRs or stack slots needed. */
+    n = (sz + CTSIZE_PTR-1) / CTSIZE_PTR;  /* Number of GPRs or stack slots needed. */
 
     CCALL_HANDLE_REGARG  /* Handle register arguments. */
 
     /* Otherwise pass argument on stack. */
+#if CCALL_PACK_STACKARG
+    if (CCALL_ALIGN_STACKARG) {
+      MSize align;
+      if (rp || (isva && (d->info & CTF_ALIGN) <= CTALIGN_PTR)) {
+	align = CTSIZE_PTR-1;
+      } else {
+	align = (1u << ctype_align(d->info)) -1;
+      }
+      nspb = (nspb + align) & ~align;  /* Align argument on stack. */
+    }
+    if (nspb + sz > CCALL_MAXSTACK*CTSIZE_PTR) {  /* Too many arguments. */
+    err_nyi:
+      lj_err_caller(L, LJ_ERR_FFI_NYICALL);
+    }
+    dp = ((char*)&cc->stack[0]) + nspb;
+    nspb += sz;
+#else
     if (CCALL_ALIGN_STACKARG && !rp && (d->info & CTF_ALIGN) > CTALIGN_PTR) {
       MSize align = (1u << ctype_align(d->info-CTALIGN_PTR)) -1;
       nsp = (nsp + align) & ~align;  /* Align argument on stack. */
@@ -1038,6 +1061,7 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
     }
     dp = &cc->stack[nsp];
     nsp += n;
+#endif
     isva = 0;
 
   done:
@@ -1049,12 +1073,14 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
     lj_cconv_ct_tv(cts, d, (uint8_t *)dp, o, CCF_ARG(narg));
     /* Extend passed integers to 32 bits at least. */
     if (ctype_isinteger_or_bool(d->info) && d->size < 4) {
-      if (d->info & CTF_UNSIGNED)
-	*(uint32_t *)dp = d->size == 1 ? (uint32_t)*(uint8_t *)dp :
-					 (uint32_t)*(uint16_t *)dp;
-      else
-	*(int32_t *)dp = d->size == 1 ? (int32_t)*(int8_t *)dp :
-					(int32_t)*(int16_t *)dp;
+      if (!CCALL_PACK_STACKARG || !((uintptr_t)dp & 3)) {
+	if (d->info & CTF_UNSIGNED)
+	  *(uint32_t *)dp = d->size == 1 ? (uint32_t)*(uint8_t *)dp :
+					   (uint32_t)*(uint16_t *)dp;
+	else
+	  *(int32_t *)dp = d->size == 1 ? (int32_t)*(int8_t *)dp :
+					  (int32_t)*(int16_t *)dp;
+      }
     }
 #if LJ_TARGET_ARM64 && LJ_BE
     if (isfp && d->size == sizeof(float))
@@ -1099,10 +1125,14 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
 #if LJ_TARGET_X64 || (LJ_TARGET_PPC && !LJ_ABI_SOFTFP)
   cc->nfpr = nfpr;  /* Required for vararg functions. */
 #endif
+#if CCALL_PACK_STACKARG
+  cc->nsp = (nspb + CTSIZE_PTR-1) / CTSIZE_PTR;
+#else
   cc->nsp = nsp;
+#endif
   cc->spadj = (CCALL_SPS_FREE + CCALL_SPS_EXTRA)*CTSIZE_PTR;
-  if (nsp > CCALL_SPS_FREE)
-    cc->spadj += (((nsp-CCALL_SPS_FREE)*CTSIZE_PTR + 15u) & ~15u);
+  if (cc->nsp > CCALL_SPS_FREE)
+    cc->spadj += (((cc->nsp-CCALL_SPS_FREE)*CTSIZE_PTR + 15u) & ~15u);
   return gcsteps;
 }
 
