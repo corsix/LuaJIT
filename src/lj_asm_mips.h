@@ -69,6 +69,11 @@ static void asm_sparejump_setup(ASMState *as)
     mxp -= MIPS_SPAREJUMP*2;
     lj_assertA(MIPSI_NOP == 0, "bad NOP");
     memset(mxp, 0, MIPS_SPAREJUMP*2*sizeof(MCode));
+    /* j ->vm_jump_to_trace; sw RET, 0(sp) */
+    *--mxp = MIPSI_SW|MIPSF_T(RID_RET)|MIPSF_S(RID_SP)|0;
+    *--mxp = MIPSI_J|((((uintptr_t)(void *)lj_vm_jump_to_trace)>>2)&0x03ffffffu);
+    lj_assertA(((uintptr_t)mxp ^ (uintptr_t)(void *)lj_vm_jump_to_trace)>>28 == 0,
+	       "branch target out of range");
     as->mctop = mxp;
   }
 }
@@ -83,10 +88,11 @@ static MCode *asm_sparejump_use(MCode *mcarea, MCode tjump)
       return mxp;
     } else if (*mxp == MIPSI_NOP) {
       *mxp = tjump;
+      lj_mcode_sync(mxp, mxp+1);
       return mxp;
     }
   }
-  return NULL;
+  return mxp - 2;
 }
 
 /* Setup exit stub after the end of each trace. */
@@ -2775,22 +2781,26 @@ void lj_asm_patchexit(jit_State *J, GCtrace *T, ExitNo exitno, MCode *target)
 	ptrdiff_t delta = target - p;
 	if (((delta + 0x8000) >> 16) == 0) {  /* Patch in-range branch. */
 	patchbranch:
-	  p[-1] = (p[-1] & 0xffff0000u) | (delta & 0xffffu);
 	  *p = MIPSI_NOP;  /* Replace the load of the exit number. */
+	patchbranch1:
+	  p[-1] = (p[-1] & 0xffff0000u) | (delta & 0xffffu);
 	  cstop = p+1;
 	  if (!cstart) cstart = p-1;
 	} else {  /* Branch out of range. Use spare jump slot in mcarea. */
 	  MCode *mcjump = asm_sparejump_use(mcarea, tjump);
-	  if (mcjump) {
-	    lj_mcode_sync(mcjump, mcjump+1);
-	    delta = mcjump - p;
-	    if (((delta + 0x8000) >> 16) == 0) {
+	  delta = mcjump - p;
+	  if (((delta + 0x8000) >> 16) == 0) {
+	    if (*mcjump == tjump) {
 	      goto patchbranch;
 	    } else {
-	      lj_assertJ(0, "spare jump out of range: -Osizemcode too big");
+	      /* Used up all the spares, so got lj_vm_jump_to_trace instead. */
+	      lj_assertJ(target == J->cur.mcode, "expected jump to cur trace");
+	      *p = MIPSI_ORI | MIPSF_T(RID_TMP) | J->cur.traceno;
+	      goto patchbranch1;
 	    }
+	  } else {
+	    lj_assertJ(0, "spare jump out of range: -Osizemcode too big");
 	  }
-	  /* Ignore jump slot overflow. Child trace is simply not attached. */
 	}
       } else if (p+1 == pe) {
 	/* Patch NOP after code for inverted loop branch. Use of J is ok. */

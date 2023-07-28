@@ -2522,6 +2522,18 @@ static void build_subroutines(BuildCtx *ctx)
   |.  move CARG1, L
   |.endif
   |
+  |// Caller provides traceno in ra, has spilled CRET1 to 0(sp), and sets JGL
+  |->vm_jump_to_trace:
+  |.if JIT
+  |  lw CRET1, (DISPATCH_J(trace)-GG_DISP2G-32768)(JGL)
+  |   sll ra, ra, 2
+  |  addu ra, ra, CRET1
+  |  lw TRACE:ra, 0(ra)
+  |  lw CRET1, TRACE:ra->mcode
+  |  jr CRET1
+  |.  lw CRET1, 0(sp)			// Reload spill (trace might need it)
+  |.endif
+  |
   |//-----------------------------------------------------------------------
   |//-- Math helper functions ----------------------------------------------
   |//-----------------------------------------------------------------------
