@@ -855,6 +855,35 @@ static TraceNo trace_exit_find(jit_State *J, MCode *pc)
 }
 #endif
 
+/* Evaluate a single BC_ITERN instruction, returning new PC. */
+static const BCIns *eval_ITERN(TValue *base, const BCIns *pc)
+{
+  GCtab *t = tabV(base - 2);
+  uint32_t idx = base[-1].u32.lo, asize = t->asize;
+  /* First traverse the array part. */
+  for (; idx < asize; idx++) {
+    cTValue *a = &tvref(t->array)[idx];
+    if (LJ_LIKELY(!tvisnil(a))) {
+      setintV(base, idx);
+      base[1] = *a;
+      base[-1].u32.lo = idx + 1;
+      return pc + bc_j(pc[-1]);
+    }
+  }
+  idx -= asize;
+  /* Then traverse the hash part. */
+  for (; idx <= t->hmask; idx++) {
+    Node *n = &noderef(t->node)[idx];
+    if (!tvisnil(&n->val)) {
+      base[0] = n->key;
+      base[1] = n->val;
+      base[-1].u32.lo = idx + asize + 1;
+      return pc + bc_j(pc[-1]);
+    }
+  }
+  return pc;
+}
+
 /* A trace exited. Restore interpreter state. */
 int LJ_FASTCALL lj_trace_exit(jit_State *J, void *exptr)
 {
@@ -925,8 +954,8 @@ int LJ_FASTCALL lj_trace_exit(jit_State *J, void *exptr)
 	J->patchpc = (BCIns *)pc;
 	*J->patchpc = *retpc;
 	J->bcskip = 1;
-      } else if (isret) {
-	pc = retpc;
+      } else {
+	pc = isret ? retpc : eval_ITERN(L->base + bc_a(*retpc), pc + 2);
 	setcframe_pc(cf, pc);
       }
     }
