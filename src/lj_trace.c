@@ -549,6 +549,21 @@ static void trace_stop(jit_State *J)
   );
 }
 
+/* Find _any_ slot in the frame _not_ used by a BC_RET* instruction. */
+static int ret_spareslot(jit_State *J, BCIns ins, GCproto *pt)
+{
+  /* Prefer a high slot, as this is more likely to be a temporary. */
+  /* But not too high, as snapshot restore might not ensure full framesize. */
+  int a = bc_a(ins);
+  if (bc_op(ins) != BC_RETM) {
+    int top = a + bc_d(ins);
+    if (top <= (int)pt->framesize) {
+      a = top;
+    }
+  }
+  return a - 1;
+}
+
 /* Start a new root trace for down-recursion. */
 static int trace_downrec(jit_State *J)
 {
@@ -557,6 +572,8 @@ static int trace_downrec(jit_State *J)
   lj_assertJ(bc_isret(bc_op(*J->pc)), "not at a return bytecode");
   if (bc_op(*J->pc) == BC_RETM)
     return 0;  /* NYI: down-recursion with RETM. */
+  if (ret_spareslot(J, *J->pc, J->pt) < 0)
+    return 0;  /* NYI: Nowhere to anchor trace on exit. */
   J->parent = 0;
   J->exitno = 0;
   J->state = LJ_TRACE_RECORD;
@@ -946,7 +963,8 @@ int LJ_FASTCALL lj_trace_exit(jit_State *J, void *exptr)
     trace_hotside(J, pc);
   }
   if (bc_op(*pc) == BC_JLOOP) {
-    BCIns *retpc = &traceref(J, bc_d(*pc))->startins;
+    GCtrace *rettr = traceref(J, bc_d(*pc));
+    BCIns *retpc = &rettr->startins;
     int isret = bc_isret(bc_op(*retpc));
     if (isret || bc_op(*retpc) == BC_ITERN) {
       if (J->state == LJ_TRACE_RECORD) {
@@ -955,7 +973,16 @@ int LJ_FASTCALL lj_trace_exit(jit_State *J, void *exptr)
 	*J->patchpc = *retpc;
 	J->bcskip = 1;
       } else {
-	pc = isret ? retpc : eval_ITERN(L->base + bc_a(*retpc), pc + 2);
+	if (isret) {
+	  /* Need to anchor rettr in case a hook runs before retpc. */
+	  GCproto *pt = funcproto(frame_func(L->base - 1));
+	  TValue *anchor = L->base + ret_spareslot(J, *retpc, pt);
+	  lj_assertJ(anchor >= L->base, "no spare slot");
+	  setgcV(L, anchor, obj2gco(rettr), LJ_TTRACE);
+	  pc = retpc;
+	} else {
+	  pc = eval_ITERN(L->base + bc_a(*retpc), pc + 2);
+	}
 	setcframe_pc(cf, pc);
       }
     }
