@@ -447,6 +447,15 @@ void lj_meta_call(lua_State *L, TValue *func, TValue *top)
     lj_err_optype_call(L, func);
   for (p = top; p > func+2*LJ_FR2; p--) copyTV(L, p, p-1);
   if (LJ_FR2) copyTV(L, func+2, func);
+  if (LJ_UNLIKELY(top >= tvref(L->maxstack))) {
+    if ((G(L)->dispatchmode & DISPMODE_CALL)) {
+      /* lj_vm_callhook will do a stack check. */
+      /* Furthermore, detouring now might confuse the JIT. */
+    } else {
+      /* Call meta_call, which will do a stack check then re-fetch mo. */
+      mo = &G(L)->meta_call;
+    }
+  }
   copyTV(L, func, mo);
 }
 

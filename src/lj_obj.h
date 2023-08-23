@@ -644,6 +644,7 @@ typedef struct global_State {
   TValue tmptv, tmptv2;	/* Temporary TValues. */
   Node nilnode;		/* Fallback 1-element hash part (nil key and value). */
   TValue registrytv;	/* Anchor for registry. */
+  TValue meta_call;     /* Helper for lj_meta_call. */
   GCupval uvhead;	/* Head of double-linked list of all open upvalues. */
   int32_t hookcount;	/* Instruction hook countdown. */
   int32_t hookcstart;	/* Start count for instruction hook counter. */
@@ -658,6 +659,8 @@ typedef struct global_State {
   PRNGState prng;	/* Global PRNG state. */
   GCRef gcroot[GCROOT_MAX];  /* GC roots. */
 } global_State;
+
+#define DISPMODE_CALL	0x01	/* Override call dispatch. */
 
 #define mainthread(g)	(&gcref(g->mainthref)->th)
 #define niltv(L) \

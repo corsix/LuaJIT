@@ -107,6 +107,7 @@ static void gc_mark_start(global_State *g)
   gc_markobj(g, mainthread(g));
   gc_markobj(g, tabref(mainthread(g)->env));
   gc_marktv(g, &g->registrytv);
+  gc_marktv(g, &g->meta_call);
   gc_mark_gcroot(g);
   g->gc.state = GCSpropagate;
 }

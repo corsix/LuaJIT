@@ -671,6 +671,28 @@ static void setpc_wrap_aux(lua_State *L, GCfunc *fn)
 
 /* ------------------------------------------------------------------------ */
 
+#define LJLIB_MODULE_meta
+
+LJLIB_NOREGUV LJLIB_ASM(meta_call)
+{
+  /* See lj_meta_call. */
+  cTValue *mo = lj_meta_lookup(L, L->base, MM_call);
+  copyTV(L, L->base-1-LJ_FR2, mo);
+  return FFH_TAILCALL;
+}
+LJLIB_PUSH(lastcl)
+
+#include "lj_libdef.h"
+
+LJ_FUNC void luaopen_meta(lua_State *L)
+{
+  LJ_LIB_REG(L, NULL, meta);
+  G(L)->meta_call = *--L->top;
+  G(L)->registrytv = *--L->top;
+}
+
+/* ------------------------------------------------------------------------ */
+
 static void newproxy_weaktable(lua_State *L)
 {
   /* NOBARRIER: The table is new (marked white). */

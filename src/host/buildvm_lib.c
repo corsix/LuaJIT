@@ -59,7 +59,12 @@ static void libdef_endmodule(BuildCtx *ctx)
     fprintf(ctx->fp, "static const uint8_t %s%s[] = {\n",
 	    LABEL_PREFIX_LIBINIT, modname);
     line[0] = '\0';
-    for (n = 0, p = obuf; p < optr; p++) {
+    n = 0, p = obuf;
+    if (!strcmp(modname, "meta")) {
+      n += sprintf(line+n, "%d,%d,LJ_MIN_REGISTRY,", p[0], p[1]);
+      p += 3;
+    }
+    for (; p < optr; p++) {
       n += sprintf(line+n, "%d,", *p);
       if (n >= 75) {
 	fprintf(ctx->fp, "%s\n", line);
@@ -101,6 +106,15 @@ static int find_ffofs(BuildCtx *ctx, const char *name)
     const char *gl = ctx->globnames[i];
     if (gl[0] == 'f' && gl[1] == 'f' && gl[2] == '_' && !strcmp(gl+3, name)) {
       return (int)((uint8_t *)ctx->glob[i] - ctx->code);
+    }
+  }
+  if (!strcmp(name, "meta_call")) {
+    /* HACK: Add ff_meta_call to every vm_*.dasc (aliasing fff_fallback) */
+    for (i = 0; i < ctx->nglob; i++) {
+      const char *gl = ctx->globnames[i];
+      if (!strcmp(gl, "fff_fallback")) {
+        return (int)((uint8_t *)ctx->glob[i] - ctx->code);
+      }
     }
   }
   fprintf(stderr, "Error: undefined fast function %s%s\n",

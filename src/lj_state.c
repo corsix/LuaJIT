@@ -140,6 +140,9 @@ static void stack_init(lua_State *L1, lua_State *L)
 
 /* -- State handling ------------------------------------------------------ */
 
+
+LJ_FUNC void luaopen_meta(lua_State *L);
+
 /* Open parts that may cause memory-allocation errors. */
 static TValue *cpluaopen(lua_State *L, lua_CFunction dummy, void *ud)
 {
@@ -149,7 +152,6 @@ static TValue *cpluaopen(lua_State *L, lua_CFunction dummy, void *ud)
   stack_init(L, L);
   /* NOBARRIER: State initialization, all objects are white. */
   setgcref(L->env, obj2gco(lj_tab_new(L, 0, LJ_MIN_GLOBAL)));
-  settabV(L, registry(L), lj_tab_new(L, 0, LJ_MIN_REGISTRY));
   lj_str_init(L);
   lj_meta_init(L);
   lj_lex_init(L);
@@ -157,6 +159,7 @@ static TValue *cpluaopen(lua_State *L, lua_CFunction dummy, void *ud)
   g->gc.threshold = 4*g->gc.total;
   lj_trace_initstate(g);
   lj_err_verify();
+  luaopen_meta(L);
   return NULL;
 }
 

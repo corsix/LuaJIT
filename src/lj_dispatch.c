@@ -95,7 +95,7 @@ void lj_dispatch_init_hotcount(global_State *g)
 #endif
 
 /* Internal dispatch mode bits. */
-#define DISPMODE_CALL	0x01	/* Override call dispatch. */
+LJ_STATIC_ASSERT(DISPMODE_CALL == 0x01);
 #define DISPMODE_RET	0x02	/* Override return dispatch. */
 #define DISPMODE_INS	0x04	/* Override instruction dispatch. */
 #define DISPMODE_JIT	0x10	/* JIT compiler on. */
