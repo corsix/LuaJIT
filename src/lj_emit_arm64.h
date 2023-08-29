@@ -362,7 +362,7 @@ static void emit_call(ASMState *as, ASMFunction target)
     *p = A64I_BL | A64F_S26(delta>>2);
   } else {  /* Target out of range: need indirect call. But don't use R0-R7. */
     Reg r = ra_allock(as, i64ptr(target),
-		      RSET_RANGE(RID_X8, RID_MAX_GPR)-RSET_FIXED);
+	RSET_SCRATCH_GPR & ~RSET_RANGE(REGARG_FIRSTGPR, REGARG_LASTGPR+1));
     *p = A64I_BLR_AUTH | A64F_N(r);
   }
 }

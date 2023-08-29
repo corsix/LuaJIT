@@ -437,7 +437,7 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
 	  ra_leftov(as, fpr, ref);
 	  fpr++;
 	} else {
-	  Reg r = ra_alloc1(as, ref, RSET_FPR);
+	  Reg r = ra_alloc1(as, ref, RSET_RANGE(REGARG_LASTFPR+1, RID_MAX_FPR));
 	  int32_t al = spalign;
 #if LJ_HASFFI && LJ_TARGET_OSX
 	  al |= irt_isnum(ir->t) ? 7 : 3;
@@ -454,7 +454,7 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
 	  ra_leftov(as, gpr, ref);
 	  gpr++;
 	} else {
-	  Reg r = ra_alloc1(as, ref, RSET_GPR);
+	  Reg r = ra_alloc1(as, ref, RSET_RANGE(REGARG_LASTGPR+1, RID_MAX_GPR) & ~RSET_FIXED);
 	  int32_t al = spalign;
 #if LJ_HASFFI && LJ_TARGET_OSX
 	  al |= irt_size(ir->t) - 1;
@@ -1328,7 +1328,6 @@ static void asm_obar(ASMState *as, IRIns *ir)
   const CCallInfo *ci = &lj_ir_callinfo[IRCALL_lj_gc_barrieruv];
   IRRef args[2];
   MCLabel l_end;
-  RegSet allow = RSET_GPR;
   Reg obj, val, tmp;
   /* No need for other object barriers (yet). */
   lj_assertA(IR(ir->op1)->o == IR_UREFC, "bad OBAR type");
@@ -1339,7 +1338,7 @@ static void asm_obar(ASMState *as, IRIns *ir)
   asm_gencall(as, ci, args);
   emit_dm(as, A64I_MOVx, ra_releasetmp(as, ASMREF_TMP1), RID_GL);
   obj = IR(ir->op1)->r;
-  tmp = ra_scratch(as, rset_exclude(allow, obj));
+  tmp = ra_scratch(as, rset_exclude(RSET_SCRATCH_GPR, obj));
   emit_cond_branch(as, CC_EQ, l_end);
   emit_n(as, A64I_TSTw^emit_isk13(LJ_GC_BLACK, 0), tmp);
   emit_cond_branch(as, CC_EQ, l_end);
