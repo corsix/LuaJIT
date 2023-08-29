@@ -29,6 +29,7 @@
 #include "lj_dispatch.h"
 #include "lj_vm.h"
 #include "lj_target.h"
+#include "lj_prng.h"
 
 #ifdef LUA_USE_ASSERT
 #include <stdio.h>
@@ -92,6 +93,9 @@ typedef struct ASMState {
   MCode *invmcp;	/* Points to invertible loop branch (or NULL). */
   MCode *flagmcp;	/* Pending opportunity to merge flag setting ins. */
   MCode *realign;	/* Realign loop if not NULL. */
+
+  uint64_t chaosbits;
+  PRNGState chaosprng;
 
 #ifdef RID_NUM_KREF
   intptr_t krefk[RID_NUM_KREF];
@@ -172,6 +176,17 @@ IRFLDEF(FLOFS)
 #undef FLOFS
   0
 };
+
+static uint32_t chaos_bits(ASMState *as, uint32_t nbits) {
+  uint64_t chaosbits = as->chaosbits;
+  uint32_t mask = (1u << nbits) - 1u;
+  if (LJ_UNLIKELY(chaosbits <= mask)) {
+    chaosbits = lj_prng_u64(&as->chaosprng) | (1ull << 63);
+  }
+  mask &= chaosbits;
+  as->chaosbits = chaosbits >> nbits;
+  return mask;
+}
 
 /* -- Target-specific instruction emitter --------------------------------- */
 
@@ -451,11 +466,17 @@ static void ra_save(ASMState *as, IRIns *ir, Reg r)
       LJ_LIKELY(allow&RID2RSET(RID_##name)) && as->cost[RID_##name] < cost) \
     cost = as->cost[RID_##name];
 
+static RegSet chaos_allow(ASMState *as, RegSet allow) {
+  RegSet one = 1ull << chaos_bits(as, 6);
+  return allow & one ? one : allow;
+}
+
 /* Evict the register with the lowest cost, forcing a restore. */
 static Reg ra_evict(ASMState *as, RegSet allow)
 {
   IRRef ref;
   RegCost cost = ~(RegCost)0;
+  allow = chaos_allow(as, allow);
   lj_assertA(allow != RSET_EMPTY, "evict from empty set");
   if (RID_NUM_FPR == 0 || allow < RID2RSET(RID_MAX_GPR)) {
     GPRDEF(MINCOST)
@@ -477,7 +498,7 @@ static Reg ra_evict(ASMState *as, RegSet allow)
 /* Pick any register (marked as free). Evict on-demand. */
 static Reg ra_pick(ASMState *as, RegSet allow)
 {
-  RegSet pick = as->freeset & allow;
+  RegSet pick = as->freeset & (allow = chaos_allow(as, allow));
   if (!pick)
     return ra_evict(as, allow);
   else
@@ -551,6 +572,7 @@ static Reg ra_allock(ASMState *as, intptr_t k, RegSet allow)
   /* First try to find a register which already holds the same constant. */
   RegSet pick, work = ~as->freeset & RSET_GPR;
   Reg r;
+  allow = chaos_allow(as, allow);
   while (work) {
     IRRef ref;
     r = rset_pickbot(work);
@@ -637,6 +659,7 @@ static Reg ra_allocref(ASMState *as, IRRef ref, RegSet allow)
       }
       RA_DBGX((as, "hintmiss  $f $r", ref, r));
     }
+    pick = chaos_allow(as, pick);
     /* Invariants should preferably get unmodified registers. */
     if (ref < as->loopref && !irt_isphi(ir->t)) {
       if ((pick & ~as->modset))
@@ -649,7 +672,7 @@ static Reg ra_allocref(ASMState *as, IRRef ref, RegSet allow)
       r = rset_picktop(pick);
     }
   } else {
-    r = ra_evict(as, allow);
+    r = ra_evict(as, chaos_allow(as, allow));
   }
 found:
   RA_DBGX((as, "alloc     $f $r", ref, r));
@@ -720,6 +743,7 @@ static Reg ra_dest(ASMState *as, IRIns *ir, RegSet allow)
     ra_free(as, dest);
     ra_modified(as, dest);
   } else {
+    allow = chaos_allow(as, allow);
     if (ra_hashint(dest) && rset_test((as->freeset&allow), ra_gethint(dest))) {
       dest = ra_gethint(dest);
       ra_modified(as, dest);
@@ -2483,6 +2507,8 @@ void lj_asm_trace(jit_State *J, GCtrace *T)
 #endif
     as->ir = J->curfinal->ir;  /* Use the copied IR. */
     as->curins = J->cur.nins = as->orignins;
+    as->chaosbits = 0;
+    memcpy(&as->chaosprng, &J2G(J)->prng, sizeof(PRNGState));
 
     RA_DBG_START();
     RA_DBGX((as, "===== STOP ====="));
