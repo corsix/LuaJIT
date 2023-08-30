@@ -595,6 +595,7 @@ static void asm_conv(ASMState *as, IRIns *ir)
   int st64 = (st == IRT_I64 || st == IRT_U64 || st == IRT_P64);
   int stfp = (st == IRT_NUM || st == IRT_FLOAT);
   IRRef lref = ir->op1;
+  int kint = (st == IRT_U64 && IR(lref)->o == IR_KINT && IR(lref)->i < 0);
   lj_assertA(irt_type(ir->t) != st, "inconsistent types for CONV");
   if (irt_isfp(ir->t)) {
     Reg dest = ra_dest(as, ir, RSET_FPR);
@@ -603,7 +604,9 @@ static void asm_conv(ASMState *as, IRIns *ir)
 	      (dest & 31), (ra_alloc1(as, lref, RSET_FPR) & 31));
     } else {  /* Integer to FP conversion. */
       Reg left = ra_alloc1(as, lref, RSET_GPR);
-      A64Ins ai = irt_isfloat(ir->t) ?
+      A64Ins ai;
+      if (kint) st = IRT_U32;
+      ai = irt_isfloat(ir->t) ?
 	(((IRT_IS64 >> st) & 1) ?
 	 (st == IRT_I64 ? A64I_FCVT_F32_S64 : A64I_FCVT_F32_U64) :
 	 (st == IRT_INT ? A64I_FCVT_F32_S32 : A64I_FCVT_F32_U32)) :
@@ -641,7 +644,14 @@ static void asm_conv(ASMState *as, IRIns *ir)
   } else {
     Reg dest = ra_dest(as, ir, RSET_GPR);
     if (irt_is64(ir->t)) {
-      if (st64 || !(ir->op2 & IRCONV_SEXT)) {
+      if (kint) {
+	if (ir->op2 & IRCONV_SEXT) {
+	  ra_leftov(as, dest, lref);
+	} else {
+	  Reg left = ra_alloc1(as, lref, RSET_GPR);
+	  emit_dm(as, A64I_MOVw, dest, left);
+	}
+      } else if (st64 || !(ir->op2 & IRCONV_SEXT)) {
 	/* 64/64 bit no-op (cast) or 32 to 64 bit zero extension. */
 	ra_leftov(as, dest, lref);  /* Do nothing, but may need to move regs. */
       } else {  /* 32 to 64 bit sign extension. */
@@ -649,7 +659,7 @@ static void asm_conv(ASMState *as, IRIns *ir)
 	emit_dn(as, A64I_SXTW, dest, left);
       }
     } else {
-      if (st64 && !(ir->op2 & IRCONV_NONE)) {
+      if (kint || (st64 && !(ir->op2 & IRCONV_NONE))) {
 	/* This is either a 32 bit reg/reg mov which zeroes the hiword
 	** or a load of the loword from a 64 bit address.
 	*/

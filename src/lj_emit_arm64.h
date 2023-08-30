@@ -20,7 +20,7 @@ static uint64_t get_k64val(ASMState *as, IRRef ref)
   } else {
     lj_assertA(ir->o == IR_KINT || ir->o == IR_KNULL,
 	       "bad 64 bit const IR op %d", ir->o);
-    return (uint32_t)ir->i;  /* Zero-extended. */
+    return ir->i;  /* Sign-extended. */
   }
 }
 
@@ -226,7 +226,7 @@ static void emit_loadk(ASMState *as, Reg rd, uint64_t u64)
 }
 
 /* Load a 32 bit constant into a GPR. */
-#define emit_loadi(as, rd, i)	emit_loadk(as, rd, (uint32_t)i)
+#define emit_loadi(as, rd, i)	emit_loadk(as, rd, (int32_t)i)
 
 /* Load a 64 bit constant into a GPR. */
 #define emit_loadu64(as, rd, i)	emit_loadk(as, rd, i)
