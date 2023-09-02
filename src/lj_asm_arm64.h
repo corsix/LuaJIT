@@ -1800,25 +1800,26 @@ static void asm_stack_check(ASMState *as, BCReg topslot,
     } else if (allow) {
       pbase = rset_pickbot(allow);
     } else {
-      pbase = RID_RET;
-      emit_lso(as, A64I_LDRx, RID_RET, RID_SP, 0);  /* Restore temp register. */
+      pbase = RID_NONE;
     }
   } else {
     pbase = RID_BASE;
   }
   emit_cond_branch(as, CC_LS, asm_exitstub_addr(as, exitno));
+  if (pbase == RID_NONE)
+    emit_lso(as, A64I_LDRx, pbase & 31, RID_SP, 0);  /* Restore temp register. */
   k = emit_isk12((8*topslot));
   lj_assertA(k, "slot offset %d does not fit in K12", 8*topslot);
   emit_n(as, A64I_CMPx^k, RID_TMP);
-  emit_dnm(as, A64I_SUBx, RID_TMP, RID_TMP, pbase);
+  emit_dnm(as, A64I_SUBx, RID_TMP, RID_TMP, pbase & 31);
   emit_lso(as, A64I_LDRx, RID_TMP, RID_TMP,
 	   (int32_t)offsetof(lua_State, maxstack));
   if (irp) {  /* Must not spill arbitrary registers in head of side trace. */
     if (ra_hasspill(irp->s))
-      emit_lso(as, A64I_LDRx, pbase, RID_SP, sps_scale(irp->s));
+      emit_lso(as, A64I_LDRx, pbase & 31, RID_SP, sps_scale(irp->s));
     emit_lso(as, A64I_LDRx, RID_TMP, RID_GL, glofs(as, &J2G(as->J)->cur_L));
-    if (ra_hasspill(irp->s) && !allow)
-      emit_lso(as, A64I_STRx, RID_RET, RID_SP, 0);  /* Save temp register. */
+    if (pbase == RID_NONE)
+      emit_lso(as, A64I_STRx, pbase & 31, RID_SP, 0);  /* Save temp register. */
   } else {
     emit_getgl(as, RID_TMP, cur_L);
   }
