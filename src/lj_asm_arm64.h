@@ -832,6 +832,7 @@ static void asm_href(ASMState *as, IRIns *ir, IROp merge)
   if (!isk) {
     if (irt_isnum(kt)) {
       emit_dnm(as, A64I_CSELx | A64F_CC(CC_EQ), tkey, RID_ZERO, tkey);
+      if (merge == IR_EQ) asm_guardcc(as, CC_VS); /* NaN check for IR_NEWREF */
     } else {
       lj_assertA(irt_isaddr(kt), "bad HREF key type");
       type = ra_allock(as, irt_toitype(kt) << 15, allow);
