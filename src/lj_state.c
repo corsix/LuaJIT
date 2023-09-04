@@ -118,6 +118,17 @@ void LJ_FASTCALL lj_state_growstack(lua_State *L, MSize need)
     lj_err_msg(L, LJ_ERR_STKOV);
 }
 
+static TValue *cpgrowstack(lua_State *co, lua_CFunction dummy, void *ud)
+{
+  lj_state_growstack(co, *(MSize*)ud);
+  return NULL;
+}
+
+int LJ_FASTCALL lj_state_cpgrowstack(lua_State *L, MSize need)
+{
+  return lj_vm_cpcall(L, NULL, &need, cpgrowstack);
+}
+
 void LJ_FASTCALL lj_state_growstack1(lua_State *L)
 {
   lj_state_growstack(L, 1);
