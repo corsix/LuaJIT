@@ -95,7 +95,7 @@ void lj_state_shrinkstack(lua_State *L, MSize used)
   if (4*used < L->stacksize &&
       2*(LJ_STACK_START+LJ_STACK_EXTRA) < L->stacksize &&
       /* Don't shrink stack of live trace. */
-      (tvref(G(L)->jit_base) == NULL || obj2gco(L) != gcref(G(L)->cur_L)))
+      tvref(G(L)->jit_base) != L->base)
     resizestack(L, L->stacksize >> 1);
 }
 

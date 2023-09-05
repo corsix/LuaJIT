@@ -1871,22 +1871,21 @@ static void asm_gc_check(ASMState *as)
   const CCallInfo *ci = &lj_ir_callinfo[IRCALL_lj_gc_step_jit];
   IRRef args[2];
   MCLabel l_end;
-  Reg tmp2;
+  Reg tmp1;
   ra_evictset(as, RSET_SCRATCH);
   l_end = emit_label(as);
   /* Exit trace if in GCSatomic or GCSfinalize. Avoids syncing GC objects. */
   asm_guardcnb(as, A64I_CBNZ, RID_RET); /* Assumes asm_snap_prep() is done. */
   *--as->mcp = ARM64_NOPATCH_GC_CHECK;
-  args[0] = ASMREF_TMP1;  /* global_State *g */
-  args[1] = ASMREF_TMP2;  /* MSize steps     */
+  args[0] = ASMREF_L;     /* lua_State *L    */
+  args[1] = ASMREF_TMP1;  /* MSize steps     */
   asm_gencall(as, ci, args);
-  emit_dm(as, A64I_MOVx, ra_releasetmp(as, ASMREF_TMP1), RID_GL);
-  tmp2 = ra_releasetmp(as, ASMREF_TMP2);
-  emit_loadi(as, tmp2, as->gcsteps);
+  tmp1 = ra_releasetmp(as, ASMREF_TMP1);
+  emit_loadi(as, tmp1, as->gcsteps);
   /* Jump around GC step if GC total < GC threshold. */
   emit_cond_branch(as, CC_LS, l_end);
-  emit_nm(as, A64I_CMPx, RID_TMP, tmp2);
-  emit_getgl(as, tmp2, gc.threshold);
+  emit_nm(as, A64I_CMPx, RID_TMP, tmp1);
+  emit_getgl(as, tmp1, gc.threshold);
   emit_getgl(as, RID_TMP, gc.total);
   as->gcsteps = 0;
   checkmclim(as);
