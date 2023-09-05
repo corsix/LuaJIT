@@ -93,6 +93,7 @@ typedef struct ASMState {
   MCode *invmcp;	/* Points to invertible loop branch (or NULL). */
   MCode *flagmcp;	/* Pending opportunity to merge flag setting ins. */
   MCode *realign;	/* Realign loop if not NULL. */
+  MCode *getlfixup;	/* Head of chain of fixups from emit_getL. */
 
 #ifdef LUAJIT_RANDOM_RA
   /* Randomize register allocation. OK for fuzz testing, not for production. */
@@ -401,7 +402,7 @@ static Reg ra_rematk(ASMState *as, IRRef ref)
   } else if (emit_canremat(ASMREF_L) && ir->o == IR_KPRI) {
     /* REF_NIL stores ASMREF_L register. */
     lj_assertA(irt_isnil(ir->t), "rematk of bad ASMREF_L");
-    emit_getgl(as, r, cur_L);
+    emit_getL(as, r);
 #if LJ_64
   } else if (ir->o == IR_KINT64) {
     emit_loadu64(as, r, ir_kint64(ir)->u64);
@@ -2540,6 +2541,7 @@ void lj_asm_trace(jit_State *J, GCtrace *T)
     asm_tail_prep(as);
     as->mcloop = NULL;
     as->flagmcp = NULL;
+    as->getlfixup = NULL;
     as->topslot = 0;
     as->gcsteps = 0;
     as->sectref = as->loopref;
@@ -2616,6 +2618,7 @@ void lj_asm_trace(jit_State *J, GCtrace *T)
     asm_tail_fixup(as, T->link);  /* Note: this may change as->mctop! */
   T->szmcode = (MSize)((char *)as->mctop - (char *)as->mcp);
   asm_snap_fixup_mcofs(as);
+  emit_getL_fixup(as);
 #if LJ_TARGET_MCODE_FIXUP
   asm_mcode_fixup(T->mcode, T->szmcode);
 #endif

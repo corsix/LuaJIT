@@ -295,6 +295,37 @@ static void emit_loadk64(ASMState *as, Reg r, IRIns *ir)
   }
 }
 
+/* Load SAVE_L into a register. */
+static void emit_getL(ASMState *as, Reg r)
+{
+  MCode *p = --as->mcp;
+  uintptr_t delta = 0;
+  if (as->getlfixup) {
+    delta = as->getlfixup - p;
+    lj_assertA(delta <= 0x7ffffu, "fixup delta out of range");
+  }
+  as->getlfixup = p;
+  /* Emit as PC-relative load for now; will fix it up later. */
+  *p = A64I_LDRLx | A64F_S19(delta) | A64F_D(r);
+}
+
+/* Fixup previous emit_getL calls now that spadjust is known. */
+static void emit_getL_fixup(ASMState *as)
+{
+  MCode *where = as->getlfixup;
+  if (where) {
+    uint32_t ofs = as->T->spadjust + sps_scale(SPS_FIXED) + CFRAME_OFS_L;
+    A64Ins ins = A64I_LDRx | A64F_N(RID_SP) | A64F_U12(ofs >> 3);
+    for (;;) {
+      uint32_t delta = (*where >> 5) & 0x7ffffu;
+      Reg dst = *where & 0x1f;
+      *where = ins | A64F_D(dst);
+      where += delta;
+      if (!delta) break;
+    }
+  }
+}
+
 /* Get/set global_State fields. */
 #define emit_getgl(as, r, field) \
   emit_lsptr(as, A64I_LDRx, (r), (void *)&J2G(as->J)->field)

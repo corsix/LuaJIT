@@ -561,7 +561,7 @@ static void asm_bufhdr_write(ASMState *as, Reg sb)
   irgc.ot = IRT(0, IRT_PGC);  /* GC type. */
   emit_storeofs(as, &irgc, RID_TMP, sb, offsetof(SBuf, L));
   emit_dn(as, A64I_BFMx | A64F_IMMS(lj_fls(SBUF_MASK_FLAG)) | A64F_IMMR(0), RID_TMP, tmp);
-  emit_getgl(as, RID_TMP, cur_L);
+  emit_getL(as, RID_TMP);
   emit_loadofs(as, &irgc, tmp, sb, offsetof(SBuf, L));
 }
 #endif
@@ -1814,13 +1814,14 @@ static void asm_stack_check(ASMState *as, BCReg topslot,
   emit_lso(as, A64I_LDRx, RID_TMP, RID_TMP,
 	   (int32_t)offsetof(lua_State, maxstack));
   if (irp) {  /* Must not spill arbitrary registers in head of side trace. */
+    uint32_t ofs = as->parent->spadjust + sps_scale(SPS_FIXED) + CFRAME_OFS_L;
     if (ra_hasspill(irp->s))
       emit_lso(as, A64I_LDRx, pbase, RID_SP, sps_scale(irp->s));
-    emit_lso(as, A64I_LDRx, RID_TMP, RID_GL, glofs(as, &J2G(as->J)->cur_L));
+    emit_lso(as, A64I_LDRx, RID_TMP, RID_SP, ofs);
     if (ra_hasspill(irp->s) && !allow)
       emit_lso(as, A64I_STRx, RID_RET, RID_SP, 0);  /* Save temp register. */
   } else {
-    emit_getgl(as, RID_TMP, cur_L);
+    emit_getL(as, RID_TMP);
   }
 }
 
@@ -1917,14 +1918,12 @@ static void asm_loop_tail_fixup(ASMState *as)
 
 /* -- Head of trace ------------------------------------------------------- */
 
-/* Reload L register from g->cur_L. */
+/* Reload L register from SAVE_L. */
 static void asm_head_lreg(ASMState *as)
 {
   IRIns *ir = IR(ASMREF_L);
   if (ra_used(ir)) {
-    Reg r = ra_dest(as, ir, RSET_GPR);
-    emit_getgl(as, r, cur_L);
-    ra_evictk(as);
+    emit_getL(as, ra_dest(as, ir, RSET_GPR));
   }
 }
 
