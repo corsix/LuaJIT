@@ -1973,30 +1973,25 @@ static void build_subroutines(BuildCtx *ctx)
   |    mv_vmstate CARG4w, EXIT
   |   stp xzr, CARG3, [sp, #62*8]	// Store 0/sp in RID_LR/RID_SP.
   |  sub CARG1, CARG1, lr
-  |   ldr L, GL->cur_L
   |  lsr CARG1, CARG1, #2
-  |   ldr BASE, GL->jit_base
   |  sub CARG1, CARG1, #2
   |   ldr CARG2w, [lr]		// Load trace number.
   |    st_vmstate CARG4w
   |.if ENDIAN_BE
   |   rev32 CARG2, CARG2
   |.endif
-  |   str BASE, L->base
   |  ubfx CARG2w, CARG2w, #5, #16
   |  str CARG1w, [GL, #GL_J(exitno)]
   |   str CARG2w, [GL, #GL_J(parent)]
-  |   str L, [GL, #GL_J(L)]
-  |  str xzr, GL->jit_base
   |  add CARG1, GL, #GG_G2J
   |  mov CARG2, sp
   |  bl extern lj_trace_exit		// (jit_State *J, ExitState *ex)
   |  // Returns MULTRES (unscaled) or negated error code.
+  |  ldr L, [GL, #GL_J(L)]
   |  ldr CARG2, L->cframe
   |   ldr BASE, L->base
   |  and sp, CARG2, #CFRAME_RAWMASK
-  |   ldr PC, SAVE_PC			// Get SAVE_PC.
-  |  str L, SAVE_L			// Set SAVE_L (on-trace resume/yield).
+  |  ldr PC, SAVE_PC			// Get SAVE_PC.
   |  b >1
   |.endif
   |

@@ -868,7 +868,7 @@ static TraceNo trace_exit_find(jit_State *J, MCode *pc)
 int LJ_FASTCALL lj_trace_exit(jit_State *J, void *exptr)
 {
   ERRNO_SAVE
-  lua_State *L = J->L;
+  lua_State *L;
   ExitState *ex = (ExitState *)exptr;
   ExitDataCP exd;
   int errcode, exitcode = J->exitcode;
@@ -877,16 +877,10 @@ int LJ_FASTCALL lj_trace_exit(jit_State *J, void *exptr)
   void *cf;
   GCtrace *T;
 
-  setnilV(&exiterr);
-  if (exitcode) {  /* Trace unwound with error code. */
-    J->exitcode = 0;
-    copyTV(L, &exiterr, L->top-1);
-  }
-
 #ifdef EXITSTATE_PCREG
   J->parent = trace_exit_find(J, (MCode *)(intptr_t)ex->gpr[EXITSTATE_PCREG]);
 #endif
-  T = traceref(J, J->parent); UNUSED(T);
+  T = traceref(J, J->parent);
 #ifdef EXITSTATE_CHECKEXIT
   if (J->exitno == T->nsnap) {  /* Treat stack check like a parent exit. */
     lj_assertJ(T->root != 0, "stack check in root trace");
@@ -896,6 +890,18 @@ int LJ_FASTCALL lj_trace_exit(jit_State *J, void *exptr)
   }
 #endif
   lj_assertJ(T != NULL && J->exitno < T->nsnap, "bad trace or exit number");
+
+  L = cframe_L((char*)ex->spill + T->spadjust + sps_scale(SPS_FIXED));
+  L->base = tvref(J2G(J)->jit_base);
+  setmref(J2G(J)->jit_base, NULL);
+  J->L = L;
+
+  setnilV(&exiterr);
+  if (exitcode) {  /* Trace unwound with error code. */
+    J->exitcode = 0;
+    copyTV(L, &exiterr, L->top-1);
+  }
+
   exd.J = J;
   exd.exptr = exptr;
   errcode = lj_vm_cpcall(L, NULL, &exd, trace_exit_cp);
