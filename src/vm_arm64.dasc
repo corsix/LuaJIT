@@ -483,7 +483,6 @@ static void build_subroutines(BuildCtx *ctx)
   |  cbz TMP1w, >3
   |
   |  // Resume after yield (like a return).
-  |  str L, GL->cur_L
   |  mov RA, BASE
   |   ldp BASE, CARG1, L->base
   |    movz TISNUM, #(LJ_TISNUM>>1)&0xffff, lsl #48
@@ -524,7 +523,6 @@ static void build_subroutines(BuildCtx *ctx)
   |  str TMP0, L->cframe		// Add our C frame to cframe chain.
   |
   |3:  // Entry point for vm_cpcall/vm_resume (BASE = base, PC = ftype).
-  |  str L, GL->cur_L
   |  ldp RB, CARG1, L->base		// RB = old base (for vmeta_call).
   |    movz TISNUM, #(LJ_TISNUM>>1)&0xffff, lsl #48
   |    movz TISNUMhi, #(LJ_TISNUM>>1)&0xffff, lsl #16
@@ -559,7 +557,6 @@ static void build_subroutines(BuildCtx *ctx)
   |  add TMP0, sp, #0
   |   str RC, SAVE_CFRAME
   |  str TMP0, L->cframe		// Add our C frame to cframe chain.
-  |    str L, GL->cur_L
   |  blr_auth CARG4		// (lua_State *L, lua_CFunction func, void *ud)
   |  mov BASE, CRET1
   |   mov PC, #FRAME_CP
@@ -1269,7 +1266,6 @@ static void build_subroutines(BuildCtx *ctx)
   |  ldp CARG3, CARG4, L:RA->base
   |   cmp CRET1, #LUA_YIELD
   |  ldr BASE, L->base
-  |    str L, GL->cur_L
   |    st_vmstate ST_INTERP
   |   bhi >8
   |  sub RC, CARG4, CARG3
@@ -3940,7 +3936,6 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  blr_auth CARG4			// (lua_State *L [, lua_CFunction f])
     |  // Returns nresults.
     |  ldp BASE, TMP1, L->base
-    |    str L, GL->cur_L
     |   sbfiz RC, CRET1, #3, #32
     |    st_vmstate ST_INTERP
     |  ldr PC, [BASE, FRAME_PC]

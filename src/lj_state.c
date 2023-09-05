@@ -281,7 +281,6 @@ LUA_API void lua_close(lua_State *L)
 #if LJ_HASPROFILE
   luaJIT_profile_stop(L);
 #endif
-  setgcrefnull(g->cur_L);
   lj_func_closeuv(L, tvref(L->stack));
   lj_gc_separateudata(g, 1);  /* Separate udata which have GC metamethods. */
 #if LJ_HASJIT
@@ -325,8 +324,6 @@ lua_State *lj_state_new(lua_State *L)
 void LJ_FASTCALL lj_state_free(global_State *g, lua_State *L)
 {
   lj_assertG(L != mainthread(g), "free of main thread");
-  if (obj2gco(L) == gcref(g->cur_L))
-    setgcrefnull(g->cur_L);
   lj_func_closeuv(L, tvref(L->stack));
   lj_assertG(gcref(L->openupval) == NULL, "stale open upvalues");
   lj_mem_freevec(g, tvref(L->stack), L->stacksize, TValue);
