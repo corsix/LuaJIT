@@ -158,7 +158,7 @@ nopair:
 /* -- Emit loads/stores --------------------------------------------------- */
 
 /* Prefer rematerialization of BASE/L from global_State over spills. */
-#define emit_canremat(ref)	((ref) <= ASMREF_L)
+#define emit_canremat(ref)	((ref) <= REF_BASE)
 
 /* Try to find an N-step delta relative to other consts with N < lim. */
 static int emit_kdelta(ASMState *as, Reg rd, uint64_t k, int lim)
