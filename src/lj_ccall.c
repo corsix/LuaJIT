@@ -985,6 +985,14 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
     fid = ctf->sib;
   }
 
+#if LJ_TARGET_ARM64 && LJ_ABI_WIN
+  if ((ct->info & CTF_VARARG)) {
+    nsp -= maxgpr * CTSIZE_PTR;
+    ngpr = maxgpr;
+    nfpr = CCALL_NARG_FPR;
+  }
+#endif
+
   /* Walk through all passed arguments. */
   for (o = L->base+1, narg = 1; o < top; o++, narg++) {
     CTypeID did;
@@ -1035,9 +1043,13 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
 	align = CTSIZE_PTR-1;
       nsp = (nsp + align) & ~align;
     }
+#if LJ_TARGET_ARM64 && LJ_ABI_WIN
+    dp = ((uint8_t *)cc->stack) + (int32_t)nsp;
+#else
     dp = ((uint8_t *)cc->stack) + nsp;
+#endif
     nsp += CCALL_PACK_STACKARG ? sz : n * CTSIZE_PTR;
-    if (nsp > CCALL_SIZE_STACK) {  /* Too many arguments. */
+    if ((int32_t)nsp > CCALL_SIZE_STACK) {  /* Too many arguments. */
     err_nyi:
       lj_err_caller(L, LJ_ERR_FFI_NYICALL);
     }
@@ -1099,6 +1111,9 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
 #endif
   }
   if (fid) lj_err_caller(L, LJ_ERR_FFI_NUMARG);  /* Too few arguments. */
+#if LJ_TARGET_ARM64 && LJ_ABI_WIN
+  if ((int32_t)nsp < 0) nsp = 0;
+#endif
 
 #if LJ_TARGET_X64 || (LJ_TARGET_PPC && !LJ_ABI_SOFTFP)
   cc->nfpr = nfpr;  /* Required for vararg functions. */
