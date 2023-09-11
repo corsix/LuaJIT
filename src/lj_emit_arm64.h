@@ -133,13 +133,13 @@ static void emit_lso(ASMState *as, A64Ins ai, Reg rd, Reg rn, int64_t ofs)
       (!(ai & 0x400000) || rd != rn) &&
       as->mcp != as->mcloop) {
     uint32_t prev = *as->mcp & ~A64F_D(31);
-    int ofsm = ofs - (1<<sc), ofsp = ofs + (1<<sc);
+    int ofsm = (int)ofs - (1<<sc), ofsp = (int)ofs + (1<<sc);
     A64Ins aip;
     if (prev == emit_lso_pair_candidate(ai | A64F_N(rn), ofsm, sc)) {
       aip = (A64F_A(rd) | A64F_D(*as->mcp & 31));
     } else if (prev == emit_lso_pair_candidate(ai | A64F_N(rn), ofsp, sc)) {
       aip = (A64F_D(rd) | A64F_A(*as->mcp & 31));
-      ofsm = ofs;
+      ofsm = (int)ofs;
     } else {
       goto nopair;
     }
@@ -151,7 +151,7 @@ static void emit_lso(ASMState *as, A64Ins ai, Reg rd, Reg rn, int64_t ofs)
   }
 nopair:
   if (ot == 1)
-    *--as->mcp = ai | A64F_D(rd) | A64F_N(rn) | A64F_U12(ofs >> sc);
+    *--as->mcp = ai | A64F_D(rd) | A64F_N(rn) | A64F_U12((int)ofs >> sc);
   else
     *--as->mcp = (ai^A64I_LS_U) | A64F_D(rd) | A64F_N(rn) | A64F_S9(ofs & 0x1ff);
 }
