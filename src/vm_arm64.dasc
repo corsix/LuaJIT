@@ -2187,7 +2187,7 @@ static void build_subroutines(BuildCtx *ctx)
   |//-----------------------------------------------------------------------
   |
   |// Handler for callback functions.
-  |// Saveregs already performed. Callback slot number in [sp], g in r12.
+  |// Saveregs already performed. Callback slot number in w9, g in x10.
   |->vm_ffi_callback:
   |.if FFI
   |.type CTSTATE, CTState, PC
