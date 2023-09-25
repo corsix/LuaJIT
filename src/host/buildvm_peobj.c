@@ -96,7 +96,11 @@ typedef struct PEsymaux {
 #define PEOBJ_PDATA_NRELOC	6
 #define PEOBJ_XDATA_SIZE	(8*2+4+6*2)
 #elif LJ_TARGET_ARM64
+#if LJ_ABI_ARM64EC
+#define PEOBJ_ARCH_TARGET	0xa641
+#else
 #define PEOBJ_ARCH_TARGET	0xaa64
+#endif
 #define PEOBJ_RELOC_REL32	0x03  /* MS: BRANCH26. */
 #define PEOBJ_RELOC_DIR32	0x01
 #define PEOBJ_RELOC_ADDR32NB	0x02

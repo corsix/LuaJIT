@@ -54,7 +54,11 @@
 #if defined(__i386) || defined(__i386__) || defined(_M_IX86)
 #define LUAJIT_TARGET	LUAJIT_ARCH_X86
 #elif defined(__x86_64__) || defined(__x86_64) || defined(_M_X64) || defined(_M_AMD64)
+#ifdef _M_ARM64EC
+#define LUAJIT_TARGET	LUAJIT_ARCH_ARM64
+#else
 #define LUAJIT_TARGET	LUAJIT_ARCH_X64
+#endif
 #elif defined(__arm__) || defined(__arm) || defined(__ARM__) || defined(__ARM)
 #define LUAJIT_TARGET	LUAJIT_ARCH_ARM
 #elif defined(__aarch64__) || defined(_M_ARM64)
@@ -261,6 +265,9 @@
 #endif
 #if !defined(LJ_ABI_PAUTH) && defined(__arm64e__)
 #define LJ_ABI_PAUTH		1
+#endif
+#if !defined(LJ_ABI_ARM64EC) && defined(_M_ARM64EC)
+#define LJ_ABI_ARM64EC		1
 #endif
 #define LJ_TARGET_ARM64		1
 #define LJ_TARGET_EHRETREG	0
