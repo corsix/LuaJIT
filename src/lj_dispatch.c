@@ -74,6 +74,9 @@ void lj_dispatch_init(GG_State *GG)
   disp[BC_FUNCF] = disp[BC_IFUNCF];
   disp[BC_FUNCV] = disp[BC_IFUNCV];
   GG->g.bc_cfunc_ext = GG->g.bc_cfunc_int = BCINS_AD(BC_FUNCC, LUA_MINSTACK, 0);
+#if LJ_TARGET_ARM64 && LJ_ABI_ARM64EC
+  setbc_op(&GG->g.bc_cfunc_ext, BC_FUNCCW);
+#endif
   for (i = 0; i < GG_NUM_ASMFF; i++)
     GG->bcff[i] = BCINS_AD(BC__MAX+i, 0, 0);
 #if LJ_TARGET_MIPS
@@ -313,7 +316,11 @@ int luaJIT_setmode(lua_State *L, int idx, int mode)
       }
       setbc_op(&g->bc_cfunc_ext, BC_FUNCCW);
     } else {
+#if LJ_TARGET_ARM64 && LJ_ABI_ARM64EC
+      g->wrapf = NULL;
+#else
       setbc_op(&g->bc_cfunc_ext, BC_FUNCC);
+#endif
     }
     break;
   default:

@@ -34,6 +34,16 @@ LJ_FUNCA double lj_wrap_pow(double x, double y) { return pow(x, y); }
 LJ_FUNCA double lj_wrap_fmod(double x, double y) { return fmod(x, y); }
 #endif
 
+#if LJ_TARGET_ARM64 && LJ_ABI_ARM64EC
+/* Wrapper for call checker and exit thunks. */
+LJ_FUNCA int lj_vm_funccw(lua_State *L, lua_CFunction f, GCfuncC *fn,
+			  int (*wrapf)(lua_State*, lua_CFunction))
+{
+  UNUSED(fn);
+  return wrapf ? wrapf(L, f) : f(L);
+}
+#endif
+
 /* -- Helper functions ---------------------------------------------------- */
 
 /* Required to prevent the C compiler from applying FMA optimizations.

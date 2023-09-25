@@ -4091,7 +4091,15 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  mov CARG1, L
     |   bhi ->vm_growstack_c		// Need to grow stack.
     |    st_vmstate TMP0w
-    |  blr_auth CARG4			// (lua_State *L [, lua_CFunction f])
+    if (op == BC_FUNCCW) {
+      |.if ARM64EC
+      |  bl extern lj_vm_funccw		// (lua_State *L, lua_CFunction f, GCfuncC *fn, int (*wrapf)(lua_State*, lua_CFunction))
+      |.else
+      |  blr_auth CARG4			// (lua_State *L, lua_CFunction f)
+      |.endif
+    } else {
+      |  blr_auth CARG4			// (lua_State *L)
+    }
     |  // Returns nresults.
     |  ldp BASE, TMP1, L->base
     |    str L, GL->cur_L
