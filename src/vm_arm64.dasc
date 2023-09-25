@@ -2053,15 +2053,26 @@ static void build_subroutines(BuildCtx *ctx)
   |//-- Trace exit handler -------------------------------------------------
   |//-----------------------------------------------------------------------
   |
+  |.if ARM64EC
+  |.define EXIT_NFPR, 16
+  |.else
+  |.define EXIT_NFPR, 32
+  |.endif
   |.macro savex_, a, b
+  |.if a < EXIT_NFPR
   |  stp d..a, d..b, [sp, #a*8]
-  |  stp x..a, x..b, [sp, #32*8+a*8]
+  |.endif
+  |.if a ~= 30
+  |  stp x..a, x..b, [sp, #(EXIT_NFPR+a)*8]
+  |.else
+  |  stp xzr, CARG3, [sp, #(EXIT_NFPR+a)*8]	// Store 0/sp in RID_LR/RID_SP.
+  |.endif
   |.endmacro
   |
   |->vm_exit_handler:
   |.if JIT
-  |  sub     sp, sp, #(64*8)
-  |  savex_, 0, 1
+  |  stp d0, d1, [sp, #-(EXIT_NFPR+32)*8]!
+  |  stp x0, x1, [sp, # EXIT_NFPR*8]
   |  savex_, 2, 3
   |  savex_, 4, 5
   |  savex_, 6, 7
@@ -2076,11 +2087,10 @@ static void build_subroutines(BuildCtx *ctx)
   |  savex_, 24, 25
   |  savex_, 26, 27
   |  savex_, 28, 29
-  |  stp d30, d31, [sp, #30*8]
-  |  ldr CARG1, [sp, #64*8]	// Load original value of lr.
-  |   add CARG3, sp, #64*8	// Recompute original value of sp.
+  |  add CARG3, sp, #(EXIT_NFPR+32)*8	// Recompute original value of sp.
+  |  savex_, 30, 31
+  |  ldr CARG1, [sp, #(EXIT_NFPR+32)*8]	// Load original value of lr.
   |    mv_vmstate CARG4w, EXIT
-  |   stp xzr, CARG3, [sp, #62*8]	// Store 0/sp in RID_LR/RID_SP.
   |  sub CARG1, CARG1, lr
   |   ldr L, GL->cur_L
   |  lsr CARG1, CARG1, #2
