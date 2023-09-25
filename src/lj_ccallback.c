@@ -272,7 +272,7 @@ static void callback_mcode_new(CTState *cts)
   if (CALLBACK_MAX_SLOT == 0)
     lj_err_caller(cts->L, LJ_ERR_FFI_CBACKOV);
 #if LJ_TARGET_WINDOWS
-  p = LJ_WIN_VALLOC(NULL, sz, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+  p = LJ_WIN_VALLOC_CODE(NULL, sz, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
   if (!p)
     lj_err_caller(cts->L, LJ_ERR_FFI_CBACKOV);
 #elif LJ_TARGET_POSIX

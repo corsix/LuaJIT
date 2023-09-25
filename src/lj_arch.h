@@ -672,12 +672,20 @@
 #if LJ_TARGET_WINDOWS
 #if LJ_TARGET_UWP
 #define LJ_WIN_VALLOC	VirtualAllocFromApp
+#define LJ_WIN_VALLOC2	VirtualAlloc2FromApp
 #define LJ_WIN_VPROTECT	VirtualProtectFromApp
 extern void *LJ_WIN_LOADLIBA(const char *path);
 #else
 #define LJ_WIN_VALLOC	VirtualAlloc
+#define LJ_WIN_VALLOC2	VirtualAlloc2
 #define LJ_WIN_VPROTECT	VirtualProtect
 #define LJ_WIN_LOADLIBA(path)	LoadLibraryExA((path), NULL, 0)
+#endif
+#if LJ_TARGET_ARM64 && LJ_ABI_ARM64EC
+extern void *LJ_WIN_VALLOC_CODE(void *hint, size_t sz, unsigned atype,
+				unsigned prot);
+#else
+#define LJ_WIN_VALLOC_CODE LJ_WIN_VALLOC
 #endif
 #endif
 
