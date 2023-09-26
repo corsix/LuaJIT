@@ -1270,6 +1270,10 @@ static int crec_call(jit_State *J, RecordFFData *rd, GCcdata *cd)
 		 ctype_isenum(ctr->info)) || t == IRT_CDATA) {
       lj_trace_err(J, LJ_TRERR_NYICALL);
     }
+#if LJ_TARGET_ARM64 && LJ_ABI_ARM64EC
+    if (!tref_isk(func))
+      t |= IRT_GUARD; /* Need runtime guard against x64 call. */
+#endif
     if ((ct->info & CTF_VARARG)
 #if LJ_TARGET_X86
 	|| ctype_cconv(ct->info) != CTCC_CDECL

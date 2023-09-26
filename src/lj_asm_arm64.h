@@ -546,8 +546,20 @@ static void asm_callx(ASMState *as, IRIns *ir)
   if (irref_isk(func)) {  /* Call to constant address. */
     ci.func = (ASMFunction)(ir_k64(irf)->u64);
   } else {  /* Need a non-argument register for indirect calls. */
+#if LJ_ABI_ARM64EC
+    lj_assertA(as->freeset | RSET_RANGE(RID_X9,RID_X11+1) == as->freeset,
+	       "x9/x10/x11 not free");  /* Must have been evicted. */
+    ra_leftov(as, RID_X11, func);
+    ra_allockreg(as, 0, RID_X10);
+    emit_n(as, A64I_BLR_AUTH, RID_X11);
+    asm_guardcnb(as, A64I_CBZ | A64I_X, RID_X11);
+    emit_n(as, A64I_BLR_AUTH, RID_X9);
+    emit_lsptr(as, A64I_LDRx, RID_X9,
+	       (void *)&J2GG(as->J)->got[LJ_GOT___os_arm64x_check_icall]);
+#else
     Reg freg = ra_alloc1(as, func, RSET_RANGE(RID_X8, RID_MAX_GPR)-RSET_FIXED);
     emit_n(as, A64I_BLR_AUTH, freg);
+#endif
     ci.func = (ASMFunction)(void *)0;
   }
   asm_gencall(as, &ci, args);
