@@ -160,11 +160,21 @@
 |
 |.macro save_, gpr1, gpr2, fpr1, fpr2
 |  stp_unwind d..fpr1, d..fpr2, [sp, # SAVE_FPR_+(14-fpr1)*8]
+|.if ARM64EC and (gpr1 == 23)
+|.elif ARM64EC and (gpr1 == 27)
+|  str x..gpr1, [sp, # SAVE_GPR_+(27-gpr1)*8]
+|.else
 |  stp_unwind x..gpr1, x..gpr2, [sp, # SAVE_GPR_+(27-gpr1)*8]
+|.endif
 |.endmacro
 |.macro rest_, gpr1, gpr2, fpr1, fpr2
 |  ldp_unwind d..fpr1, d..fpr2, [sp, # SAVE_FPR_+(14-fpr1)*8]
+|.if ARM64EC and (gpr1 == 23)
+|.elif ARM64EC and (gpr1 == 27)
+|  ldr x..gpr1, [sp, # SAVE_GPR_+(27-gpr1)*8]
+|.else
 |  ldp_unwind x..gpr1, x..gpr2, [sp, # SAVE_GPR_+(27-gpr1)*8]
+|.endif
 |.endmacro
 |
 |.macro saveregs
