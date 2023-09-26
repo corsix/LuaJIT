@@ -428,8 +428,14 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
   uint32_t n, nargs = CCI_XNARGS(ci);
   int32_t spofs = 0, spalign = LJ_HASFFI && LJ_TARGET_OSX ? 0 : 7;
   Reg gpr, fpr = REGARG_FIRSTFPR;
-  if (ci->func)
-    emit_call(as, ci->func);
+  ASMFunction func;
+  if ((func = ci->func)) {
+#if LJ_ABI_ARM64EC
+    if (lj_vm_arm64ec_is_x64(J2G(as->J), &func))
+      lj_trace_err(as->J, LJ_TRERR_NYICALL);
+#endif
+    emit_call(as, func);
+  }
   for (gpr = REGARG_FIRSTGPR; gpr <= REGARG_LASTGPR; gpr++)
     as->cost[gpr] = REGCOST(~0u, ASMREF_L);
   gpr = REGARG_FIRSTGPR;

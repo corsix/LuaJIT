@@ -2285,6 +2285,25 @@ static void build_subroutines(BuildCtx *ctx)
   |  ret
   |.endif
   |
+  |.if ARM64EC
+  |// int lj_vm_arm64ec_is_x64(global_State *g, ASMFunction* f)
+  |// Mutates f, returns true if resultant function is x64.
+  |->vm_arm64ec_is_x64:
+  |  sp_auth
+  |  stp fp, lr, [sp, #-16]!
+  |  mov fp, sp
+  |  ldr CARG1, [GL:CARG1, #GL_GOT(__os_arm64x_check_icall)]
+  |  ldr x11, [CARG2]			// Pointer to be checked
+  |  movz w10, #0			// Exit stub
+  |  blr_auth CARG1			// x0-x8 saved, x9 out, x10 in, x11 in/out
+  |  cmp x11, #0			// Result is exit stub?
+  |  csel x11, x11, x9, ne		// ARM64 or x64 pointer
+  |  str x11, [CARG2]
+  |  cset CRET1w, eq
+  |  ldp fp, lr, [sp], #16
+  |  ret_auth
+  |.endif
+  |
   |//-----------------------------------------------------------------------
   |//-- FFI helper functions -----------------------------------------------
   |//-----------------------------------------------------------------------

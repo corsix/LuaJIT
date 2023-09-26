@@ -15,6 +15,7 @@
 #include "lj_cdata.h"
 #include "lj_ccall.h"
 #include "lj_trace.h"
+#include "lj_vm.h"
 
 /* Target-specific handling of register arguments. */
 #if LJ_TARGET_X86
@@ -1181,6 +1182,10 @@ int lj_ccall_func(lua_State *L, GCcdata *cd)
     CCallState cc;
     int gcsteps, ret;
     cc.func = (void (*)(void))cdata_getptr(cdataptr(cd), sz);
+#if LJ_TARGET_ARM64 && LJ_ABI_ARM64EC
+    if (lj_vm_arm64ec_is_x64(cts->g, &cc.func))
+      lj_err_caller(L, LJ_ERR_FFI_NYICALL);
+#endif
     gcsteps = ccall_set_args(L, cts, ct, &cc);
     ct = (CType *)((intptr_t)ct-(intptr_t)cts->tab);
     cts->cb.slot = ~0u;
