@@ -127,9 +127,17 @@
 |.define SAVE_ERRF,	[sp, #36]
 |.define SAVE_MULTRES,	[sp, #32]
 |.define TMPD,		[sp, #24]	// 64 bit values
+|.if ARM64EC
+|// Leave 32 bytes of home space at bottom for outgoing x64 FUNCCW calls.
+|// But get to use the save slots for x23/x24/x28 instead.
+|.define SAVE_L,	[sp, # SAVE_GPR_+(27-23)*8]
+|.define SAVE_PC,	[sp, # SAVE_GPR_+(27-23)*8+8]
+|.define SAVE_CFRAME,	[sp, # SAVE_GPR_+(27-27)*8+8]
+|.else
 |.define SAVE_L,	[sp, #16]
 |.define SAVE_PC,	[sp, #8]
 |.define SAVE_CFRAME,	[sp, #0]
+|.endif
 |//----- 16 byte aligned, <-- sp while in interpreter.
 |
 |.define TMPDofs,	#24
@@ -4093,7 +4101,12 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |    st_vmstate TMP0w
     if (op == BC_FUNCCW) {
       |.if ARM64EC
-      |  bl extern lj_vm_funccw		// (lua_State *L, lua_CFunction f, GCfuncC *fn, int (*wrapf)(lua_State*, lua_CFunction))
+      |  ldr x9, [GL, #GL_GOT(__os_arm64x_check_icall)]
+      |  cmp CARG4, #0
+      |  adr x10, >1			// Exit stub
+      |  csel x11, CARG2, CARG4, eq	// Pointer to be checked
+      |  blr_auth x9
+      |  blr_auth x11			// (lua_State *L [, lua_CFunction f])
       |.else
       |  blr_auth CARG4			// (lua_State *L, lua_CFunction f)
       |.endif
@@ -4108,6 +4121,18 @@ static void build_ins(BuildCtx *ctx, BCOp op, int defop)
     |  ldr PC, [BASE, FRAME_PC]
     |   sub RA, TMP1, RC		// RA = L->top - nresults*8
     |  b ->vm_returnc
+    if (op == BC_FUNCCW) {
+      |.if ARM64EC
+      |1:
+      |  sp_auth
+      |  ldr x16, [GL, #GL_GOT(__os_arm64x_dispatch_call_no_redirect)]
+      |  mov RA, lr
+      |  blr_auth x16			// Call via x16 is hint to emulator
+      |  mov lr, RA			// Help return address predictor.
+      |  mov CRET1w, w8			// w8 is x64 eax
+      |  ret_auth
+      |.endif
+    }
     break;
 
   /* ---------------------------------------------------------------------- */
