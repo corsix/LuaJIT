@@ -266,8 +266,12 @@
 #if !defined(LJ_ABI_PAUTH) && defined(__arm64e__)
 #define LJ_ABI_PAUTH		1
 #endif
-#if !defined(LJ_ABI_ARM64EC) && defined(_M_ARM64EC)
+#if !defined(LJ_ABI_ARM64EC)
+#if defined(_M_ARM64EC)
 #define LJ_ABI_ARM64EC		1
+#else
+#define LJ_ABI_ARM64EC		0
+#endif
 #endif
 #define LJ_TARGET_ARM64		1
 #define LJ_TARGET_EHRETREG	0

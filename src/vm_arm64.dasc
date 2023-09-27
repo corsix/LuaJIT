@@ -2385,10 +2385,16 @@ static void build_subroutines(BuildCtx *ctx)
   |  subs TMP1, TMP1, #8
   |  bpl <1
   |2:
+  |.if ARM64EC
+  |  ldrb TMP1w, CCSTATE->x64
+  |.endif
   |  ldp x0, x1, CCSTATE->gpr[0]
   |   ldp d0, d1, CCSTATE->fpr[0]
   |  ldp x2, x3, CCSTATE->gpr[2]
   |   ldp d2, d3, CCSTATE->fpr[2]
+  |.if ARM64EC
+  |  tbnz TMP1w, #0, >1			// X64 call?
+  |.endif
   |  ldp x4, x5, CCSTATE->gpr[4]
   |   ldp d4, d5, CCSTATE->fpr[4]
   |  ldp x6, x7, CCSTATE->gpr[6]
@@ -2399,9 +2405,26 @@ static void build_subroutines(BuildCtx *ctx)
   |  stp x0, x1, CCSTATE->gpr[0]
   |   stp d0, d1, CCSTATE->fpr[0]
   |   stp d2, d3, CCSTATE->fpr[2]
+  |2:
   |  ldp fp, lr, [sp, #16]
   |  ldp_unwind CCSTATE, x20, [sp], #32
   |  ret_auth
+  |.if ARM64EC
+  |1:
+  |  ldr GL:x16, CCSTATE->g
+  |  fmov d0, x0			// Mirror GPRs to FPRs.
+  |  fmov d1, x1			// Varargs _require_ this, and argument
+  |  fmov d2, x2			// marshalling is simplified by always
+  |  fmov d3, x3			// doing it.
+  |  ldr x16, [GL:x16, #GL_GOT(__os_arm64x_dispatch_call_no_redirect)]
+  |  mov x9, TMP3			// X64 function pointer for emulator.
+  |  sub sp, sp, #32			// X64 home space.
+  |  blr_auth x16			// Call via x16 is hint to emulator.
+  |  sub sp, fp, #16
+  |  str x8, CCSTATE->gpr[0]		// x8 is X64 rax.
+  |  str d0, CCSTATE->fpr[0]
+  |  b <2
+  |.endif
   |.endif
   |// Note: vm_ffi_call must be the last function in this object file!
   |

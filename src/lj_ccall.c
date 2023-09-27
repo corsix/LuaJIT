@@ -298,11 +298,18 @@
 /* -- ARM64 calling conventions ------------------------------------------- */
 
 #define CCALL_HANDLE_STRUCTRET \
-  cc->retref = !ccall_classify_struct(cts, ctr); \
-  if (cc->retref) cc->retp = dp;
+  if (LJ_ABI_ARM64EC && (cc->x64 & 1)) { \
+    /* Return structs of size 1, 2, 4 or 8 in a GPR. */ \
+    cc->retref = !(sz == 1 || sz == 2 || sz == 4 || sz == 8); \
+    if (cc->retref) cc->gpr[ngpr++] = (GPRArg)dp; \
+  } else { \
+    cc->retref = !ccall_classify_struct(cts, ctr); \
+    if (cc->retref) cc->retp = dp; \
+  }
 
 #define CCALL_HANDLE_STRUCTRET2 \
-  unsigned int cl = ccall_classify_struct(cts, ctr); \
+  unsigned int cl = (LJ_ABI_ARM64EC && (cc->x64 & 1)) ? 0 : \
+    ccall_classify_struct(cts, ctr); \
   if ((cl & 4)) { /* Combine float HFA from separate registers. */ \
     CTSize i = (cl >> 8) - 1; \
     do { ((uint32_t *)dp)[i] = cc->fpr[i].lo; } while (i--); \
@@ -312,11 +319,20 @@
   }
 
 #define CCALL_HANDLE_COMPLEXRET \
-  /* Complex values are returned in one or two FPRs. */ \
-  cc->retref = 0;
+  if (LJ_ABI_ARM64EC && (cc->x64 & 1)) { \
+    cc->retref = !(sz == 8); \
+    if (cc->retref) cc->gpr[ngpr++] = (GPRArg)dp; \
+  } else { \
+    /* Complex values are returned in one or two FPRs. */ \
+    cc->retref = 0; \
+  }
 
 #define CCALL_HANDLE_COMPLEXRET2 \
-  if (ctr->size == 2*sizeof(float)) {  /* Copy complex float from FPRs. */ \
+  if (LJ_ABI_ARM64EC && (cc->x64 & 1)) { \
+    if (!cc->retref) \
+      *(int64_t *)dp = *(int64_t *)sp;  /* Copy complex float from GPRs. */ \
+  } else if (ctr->size == 2*sizeof(float)) { \
+    /* Copy complex float from FPRs. */ \
     ((float *)dp)[0] = cc->fpr[0].f; \
     ((float *)dp)[1] = cc->fpr[1].f; \
   } else {  /* Copy complex double from FPRs. */ \
@@ -325,7 +341,9 @@
   }
 
 #define CCALL_HANDLE_STRUCTARG \
-  unsigned int cl = ccall_classify_struct(cts, d); \
+  unsigned int cl = (LJ_ABI_ARM64EC && cc->x64) ? \
+    (sz == 1 || sz == 2 || sz == 4 || sz == 8) : \
+    ccall_classify_struct(cts, d); \
   if (cl == 0) {  /* Pass struct by reference. */ \
     rp = cdataptr(lj_cdata_new(cts, did, sz)); \
     sz = CTSIZE_PTR; \
@@ -334,12 +352,23 @@
   }  /* else: Pass struct in GPRs or on stack. */
 
 #define CCALL_HANDLE_COMPLEXARG \
-  /* Pass complex by value in separate (!) FPRs or on stack. */ \
-  isfp = sz == 2*sizeof(float) ? 2 : 1;
+  if (LJ_ABI_ARM64EC && cc->x64) { \
+    /* Pass complex float in a GPR and complex double by reference. */ \
+    if (sz != 2*sizeof(float)) { \
+      rp = cdataptr(lj_cdata_new(cts, did, sz)); \
+      sz = CTSIZE_PTR; \
+    } \
+  } else { \
+    /* Pass complex by value in separate (!) FPRs or on stack. */ \
+    isfp = sz == 2*sizeof(float) ? 2 : 1; \
+  }
 
 #define CCALL_HANDLE_REGARG \
   if (LJ_TARGET_OSX && isva) { \
     /* IOS: All variadic arguments are on the stack. */ \
+  } else if (LJ_ABI_ARM64EC && cc->x64) { \
+    /* Windows/x64 argument registers are strictly positional (use ngpr). */ \
+    if (ngpr < maxgpr) { dp = &cc->gpr[ngpr++]; goto done; } \
   } else if (isfp) {  /* Try to pass argument in FPRs. */ \
     int n2 = ctype_isvector(d->info) ? 1 : \
 	     isfp == 1 ? n : (d->size >> (4-isfp)); \
@@ -952,6 +981,8 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
   case CTCC_THISCALL: maxgpr = 1; break;
   default: maxgpr = 0; break;
   }
+#elif LJ_TARGET_ARM64 && LJ_ABI_ARM64EC
+  maxgpr = cc->x64 ? 4 : CCALL_NARG_GPR;
 #else
   maxgpr = CCALL_NARG_GPR;
 #endif
@@ -986,7 +1017,7 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
     fid = ctf->sib;
   }
 
-#if LJ_TARGET_ARM64 && LJ_ABI_WIN
+#if LJ_TARGET_ARM64 && LJ_ABI_WIN && !LJ_ABI_ARM64EC
   if ((ct->info & CTF_VARARG)) {
     nsp -= maxgpr * CTSIZE_PTR;  /* May end up with negative nsp. */
     ngpr = maxgpr;
@@ -1114,7 +1145,15 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
   }
   if (fid) lj_err_caller(L, LJ_ERR_FFI_NUMARG);  /* Too few arguments. */
 #if LJ_TARGET_ARM64 && LJ_ABI_WIN
+#if LJ_ABI_ARM64EC
+  if (cc->x64 == 2) {
+    cc->gpr[4] = (intptr_t)cc->stack;
+    cc->gpr[5] = nsp;
+    nsp = 0;  /* No need to copy */
+  }
+#else
   if ((int32_t)nsp < 0) nsp = 0;
+#endif
 #endif
 
 #if LJ_TARGET_X64 || (LJ_TARGET_PPC && !LJ_ABI_SOFTFP)
@@ -1183,8 +1222,11 @@ int lj_ccall_func(lua_State *L, GCcdata *cd)
     int gcsteps, ret;
     cc.func = (void (*)(void))cdata_getptr(cdataptr(cd), sz);
 #if LJ_TARGET_ARM64 && LJ_ABI_ARM64EC
-    if (lj_vm_arm64ec_is_x64(cts->g, &cc.func))
-      lj_err_caller(L, LJ_ERR_FFI_NYICALL);
+    if ((cc.x64 = lj_vm_arm64ec_is_x64(cts->g, &cc.func))) {
+      cc.g = cts->g;
+      lj_trace_abort(cts->g);
+    }
+    if ((ct->info & CTF_VARARG)) cc.x64 |= 2;
 #endif
     gcsteps = ccall_set_args(L, cts, ct, &cc);
     ct = (CType *)((intptr_t)ct-(intptr_t)cts->tab);
