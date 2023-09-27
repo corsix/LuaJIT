@@ -427,7 +427,7 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
 {
   uint32_t n, nargs = CCI_XNARGS(ci);
   int32_t spofs = 0, spalign = LJ_HASFFI && LJ_TARGET_OSX ? 0 : 7;
-  Reg gpr, fpr = REGARG_FIRSTFPR;
+  Reg gpr, fpr = REGARG_FIRSTFPR, lastgpr = REGARG_LASTGPR;
   ASMFunction func;
   if ((func = ci->func)) {
 #if LJ_ABI_ARM64EC
@@ -442,6 +442,9 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
 #if LJ_HASFFI && LJ_ABI_WIN
   if ((ci->flags & CCI_VARARG)) {
     fpr = REGARG_LASTFPR+1;
+#if LJ_ABI_ARM64EC
+    lastgpr = RID_X3;
+#endif
   }
 #endif
   for (n = 0; n < nargs; n++) { /* Setup args. */
@@ -455,7 +458,7 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
 	  ra_leftov(as, fpr, ref);
 	  fpr++;
 #if LJ_HASFFI && LJ_ABI_WIN
-	} else if ((ci->flags & CCI_VARARG) && (gpr <= REGARG_LASTGPR)) {
+	} else if ((ci->flags & CCI_VARARG) && (gpr <= lastgpr)) {
 	  Reg rf = ra_alloc1(as, ref, RSET_FPR);
 	  emit_dn(as, A64I_FMOV_R_D, gpr++, rf & 31);
 #endif
@@ -471,7 +474,7 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
 	  spofs += al + 1;
 	}
       } else {
-	if (gpr <= REGARG_LASTGPR) {
+	if (gpr <= lastgpr) {
 	  lj_assertA(rset_test(as->freeset, gpr),
 		     "reg %d not free", gpr);  /* Must have been evicted. */
 	  ra_leftov(as, gpr, ref);
@@ -501,6 +504,14 @@ static void asm_gencall(ASMState *as, const CCallInfo *ci, IRRef *args)
 #endif
     }
   }
+#if LJ_HASFFI && LJ_ABI_WIN && LJ_ABI_ARM64EC
+  if ((ci->flags & CCI_VARARG)) {
+    lj_assertA(as->freeset | RSET_RANGE(RID_X4,RID_X5+1) == as->freeset,
+	       "x4/x5 not free");  /* Must have been evicted. */
+    ra_allockreg(as, spofs, RID_X5);
+    emit_dn(as, A64I_ADDx ^ A64I_K12, RID_X4, RID_SP);
+  }
+#endif
 }
 
 /* Setup result reg/sp for call. Evict scratch regs. */
@@ -1974,13 +1985,18 @@ static Reg asm_setup_call_slots(ASMState *as, IRIns *ir, const CCallInfo *ci)
 #if LJ_HASFFI
   uint32_t i, nargs = CCI_XNARGS(ci);
   if (nargs > (REGARG_NUMGPR < REGARG_NUMFPR ? REGARG_NUMGPR : REGARG_NUMFPR) ||
-      (LJ_TARGET_OSX && (ci->flags & CCI_VARARG))) {
+      ((LJ_TARGET_OSX || LJ_ABI_ARM64EC) && (ci->flags & CCI_VARARG))) {
     IRRef args[CCI_NARGS_MAX*2];
     int ngpr = REGARG_NUMGPR, nfpr = REGARG_NUMFPR;
     int spofs = 0, spalign = LJ_TARGET_OSX ? 0 : 7, nslots;
     asm_collectargs(as, ir, ci, args);
 #if LJ_ABI_WIN
-    if ((ci->flags & CCI_VARARG)) nfpr = 0;
+    if ((ci->flags & CCI_VARARG)) {
+      nfpr = 0;
+#if LJ_ABI_ARM64EC
+      ngpr = 4;
+#endif
+    }
 #endif
     for (i = 0; i < nargs; i++) {
       int al = spalign;
