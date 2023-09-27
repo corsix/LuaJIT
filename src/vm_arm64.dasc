@@ -2317,9 +2317,14 @@ static void build_subroutines(BuildCtx *ctx)
   |//-----------------------------------------------------------------------
   |
   |// Handler for callback functions.
-  |// Saveregs already performed. Callback slot number in w9, g in x10.
   |->vm_ffi_callback:
   |.if FFI
+  |.if ARM64EC
+  |  tst x9, #~0xffffULL		// Executing as entry thunk?
+  |  bne ->vm_ffi_callback_x64
+  |->vm_ffi_callback_arm64:
+  |.endif
+  |// Callback slot number in w9, g in x10.
   |.type CTSTATE, CTState, PC
   |  saveregs
   |  ldr CTSTATE, GL:x10->ctype_state
@@ -2427,7 +2432,36 @@ static void build_subroutines(BuildCtx *ctx)
   |.endif
   |.endif
   |// Note: vm_ffi_call must be the last function in this object file!
+  |// ... unless ARM64EC, in which case vm_ffi_call must be penultimate
+  |// function and vm_ffi_callback_x64 must be the last function.
   |
+  |.if ARM64EC
+  |->vm_ffi_callback_x64:		// Entry thunk for vm_ffi_callback.
+  |// Caveat: needs special frame unwinding.
+  |.if FFI
+  |// Address of callback stub in x9, g in x10.
+  |  stp q6, q7, [sp, #-160]!		// Save non-volatile XMM registers.
+  |  stp q8, q9, [sp, #32]
+  |  stp q10, q11, [sp, #64]
+  |  stp q12, q13, [sp, #96]
+  |  stp q14, q15, [sp, #128]
+  |  stp fp, lr, [sp, #176]		// Using some X64 home space for fp+lr.
+  |  add fp, sp, #176
+  |  ldr d8, [GL:x10, #GL_GOT(__os_arm64x_dispatch_ret)]
+  |  ldr w9, [x9]			// Load callback stub's MOVZ.
+  |  ubfx w9, w9, #5, #19		// Recover slot number and marker bit.
+  |  bl ->vm_ffi_callback_arm64
+  |  mov x8, CRET1			// x8 is X64 rax.
+  |  fmov x16, d8			// __os_arm64x_dispatch_ret
+  |  ldp fp, lr, [sp, #176]
+  |  ldp q14, q15, [sp, #128]		// Restore non-volatile XMM registers.
+  |  ldp q12, q13, [sp, #96]
+  |  ldp q10, q11, [sp, #64]
+  |  ldp q8, q9, [sp, #32]
+  |  ldp q6, q7, [sp], #160
+  |  br x16				// This consumes lr!
+  |.endif
+  |.endif
   |//-----------------------------------------------------------------------
 }
 

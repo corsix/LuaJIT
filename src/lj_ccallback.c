@@ -58,6 +58,11 @@ static MSize CALLBACK_OFS2SLOT(MSize ofs)
 #elif LJ_TARGET_ARM64
 
 #define CALLBACK_MCODE_HEAD		32
+#ifdef LJ_ABI_ARM64EC
+#define CALLBACK_SLOT2OFS(slot)		(CALLBACK_MCODE_HEAD + 12*(slot) + 4)
+#define CALLBACK_OFS2SLOT(ofs)		(((ofs)-CALLBACK_MCODE_HEAD)/12)
+#define CALLBACK_MAX_SLOT		(CALLBACK_OFS2SLOT(CALLBACK_MCODE_SIZE))
+#endif
 
 #elif LJ_TARGET_PPC
 
@@ -181,6 +186,10 @@ static void *callback_mcode_init(global_State *g, uint32_t *page)
   ((void **)p)[1] = g;
   p += 4;
   for (slot = 0; slot < CALLBACK_MAX_SLOT; slot++) {
+#if LJ_ABI_ARM64EC
+    p++;  /* Word before function contains offset of entry thunk. */
+    p[-1] = 1|(uint32_t)((intptr_t)page-(intptr_t)p);
+#endif
     *p++ = A64I_LE(A64I_MOVZw | A64F_D(RID_X9) | A64F_U16(slot));
     *p = A64I_LE(A64I_B | A64F_S26((page-p) & 0x03ffffffu));
     p++;
@@ -405,7 +414,14 @@ void lj_ccallback_mcode_free(CTState *cts)
 #elif LJ_TARGET_ARM64
 
 #define CALLBACK_HANDLE_REGARG \
-  if (isfp) { \
+  if (LJ_ABI_ARM64EC && x64) { \
+    /* Windows/x64 argument registers are strictly positional (use ngpr). */ \
+    if (isfp) { \
+      if (ngpr < 4) { sp = &cts->cb.fpr[ngpr++]; goto done; } \
+    } else { \
+      if (ngpr < 4) { sp = &cts->cb.gpr[ngpr++]; goto done; } \
+    } \
+  } else if (isfp) { \
     if (nfpr + n <= CCALL_NARG_FPR) { \
       sp = &cts->cb.fpr[nfpr]; \
       nfpr += n; \
@@ -536,6 +552,15 @@ static void callback_conv_args(CTState *cts, lua_State *L)
   MSize nfpr = 0;
 #if LJ_TARGET_ARM
   MSize fprodd = 0;
+#endif
+#endif
+#if LJ_TARGET_ARM64
+  MSize x64 = 0;
+#if LJ_ABI_ARM64EC
+  if ((x64 = (slot & 0x40000))) {
+    slot ^= x64;
+    stack = (intptr_t*)cts->cb.gpr[4] + 4;
+  }
 #endif
 #endif
 
