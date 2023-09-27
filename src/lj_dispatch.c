@@ -78,6 +78,10 @@ void lj_dispatch_init(GG_State *GG)
     GG->bcff[i] = BCINS_AD(BC__MAX+i, 0, 0);
 #if LJ_TARGET_MIPS
   memcpy(GG->got, dispatch_got, LJ_GOT__MAX*sizeof(ASMFunction *));
+#elif LJ_TARGET_ARM64 && LJ_ABI_ARM64EC
+#define GOTFUNC(name) extern ASMFunction name; GG->got[LJ_GOT_##name] = name;
+  GOTDEF(GOTFUNC)
+#undef GOTFUNC
 #endif
 }
 
