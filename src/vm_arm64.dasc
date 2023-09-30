@@ -2368,6 +2368,78 @@ static void build_subroutines(BuildCtx *ctx)
   |  b ->vm_leave_unw
   |.endif
   |
+  |.if FFI and JIT and ARM64EC
+  |->vm_arm64ec_jit_exit_thunk:		// Exit thunk for JIT calling X64.
+  |  // ARM64 arguments in x0-x7 and d0-d7, X64 func in x9, thunk kind in x15.
+  |  sp_auth
+  |  ldr x16, [GL, #GL_GOT(__os_arm64x_dispatch_call_no_redirect)]
+  |  ubfiz w12, w15, #1, #4		// Low 4 kind bits: stack adjustment.
+  |   add x17, sp, #0			// Interpreter frame reserved X64 home
+  |   stp x17, lr, [fp, #16-SAVE_FP_LR_]// space for FUNCCW. Use it for sp+lr.
+  |    tst w15, #0x10			// Next kind bit is multi-purpose flag.
+  |  sub sp, sp, w12, uxtw #3
+  |  tbnz w15, #3, >4			// Complex argument shuffle required?
+  |  tbnz w15, #2, >2			// Flushing of x4-x7 or d4-d7 required?
+  |    beq >1				// Skip mirroring of GPRs to FPRs?
+  |  fmov d0, x0
+  |   fmov d1, x1
+  |  fmov d2, x2
+  |   fmov d3, x3
+  |1:
+  |  blr_auth x16			// Call via x16 is hint to emulator.
+  |   ldp x17, lr, [fp, #16-SAVE_FP_LR_]
+  |   add sp, x17, #0
+  |  mov CRET1, x8			// x8 is X64 rax.
+  |  ret_auth
+  |2:					// Flushing of x4-x7 or d4-d7 required.
+  |    bne >3				// Flushing of d4-d7 required?
+  |  stp x4, x5, [sp, #32]		// Flush x4-x7 to stack, to handle the
+  |   stp x6, x7, [sp, #48]		// case of all arguments integer.
+  |  b <1
+  |3:
+  |  stp d4, d5, [sp, #32]		// Flush d4-d7 to stack, to handle the
+  |   stp d6, d7, [sp, #48]		// case of all arguments FP.
+  |  b <1
+  |4:					// Complex argument shuffle required.
+  |  stp x1, x2, [sp, #0]		// Spill x1-7 and d1-d7 to temporary
+  |   str d1, [sp, #56+0]		// workspace; GPRs at sp+#0 through
+  |  stp x3, x4, [sp, #16]		// sp+#56, FPRs at sp+#56 through
+  |   stp d2, d3, [sp, #56+8]		// sp+#112. Note x0/d0 not spilled.
+  |  movz w1, #0			// w1 = Index of next GPR input.
+  |   movz w2, #7			// w2 = Index of next FPR input.
+  |  add x3, sp, #112			// x3 = Output argument pointer.
+  |   lsr x15, x15, #5			// Low 5 kind bits now consumed.
+  |  stp x5, x6, [sp, #32]
+  |   stp d4, d5, [sp, #56+24]
+  |  str x7, [sp, #48]
+  |   stp d6, d7, [sp, #56+40]
+  |    bne >6				// Is 1st argument FPR?
+  |5: 					// Consume next GPR.
+  |  str x0, [x3], #8
+  |   cmp w1, #6
+  |  ldr x0, [sp, w1, uxtw #3]
+  |   csinc w1, w12, w1, eq		// Advance index or switch to stack.
+  |  tst x15, #1
+  |   lsr x15, x15, #1
+  |  beq <5				// Next argument also GPR?
+  |   cbz x15, >7			// No more arguments?
+  |6: 					// Consume next FPR.
+  |  str d0, [x3], #8
+  |   cmp w2, #13
+  |  ldr d0, [sp, w2, uxtw #3]
+  |   csinc w2, w12, w2, eq		// Advance index or switch to stack.
+  |  tst x15, #1
+  |   lsr x15, x15, #1
+  |  beq <6				// Next argument also FPR?
+  |   cbnz x15, <5			// Any more arguments?
+  |7: 					// Done consuming arguments.
+  |  ldp x0, x1, [sp, #112]!		// Remove the spill space, then copy
+  |  ldp d0, d1, [sp]			// out of home space to GPRs+FPRs.
+  |   ldp x2, x3, [sp, #16]
+  |    ldp d2, d3, [sp, #16]
+  |  b <1
+  |.endif
+  |
   |->vm_ffi_call:			// Call C function via FFI.
   |  // Caveat: needs special frame unwinding, see below.
   |.if FFI

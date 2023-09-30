@@ -1222,10 +1222,7 @@ int lj_ccall_func(lua_State *L, GCcdata *cd)
     int gcsteps, ret;
     cc.func = (void (*)(void))cdata_getptr(cdataptr(cd), sz);
 #if LJ_TARGET_ARM64 && LJ_ABI_ARM64EC
-    if ((cc.x64 = lj_vm_arm64ec_is_x64(cts->g, &cc.func))) {
-      cc.g = cts->g;
-      lj_trace_abort(cts->g);
-    }
+    if ((cc.x64 = lj_vm_arm64ec_is_x64(cts->g, &cc.func))) cc.g = cts->g;
     if ((ct->info & CTF_VARARG)) cc.x64 |= 2;
 #endif
     gcsteps = ccall_set_args(L, cts, ct, &cc);
