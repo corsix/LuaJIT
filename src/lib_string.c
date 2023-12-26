@@ -122,7 +122,7 @@ static int writer_buf(lua_State *L, const void *p, size_t size, void *sb)
 
 LJLIB_CF(string_dump)
 {
-  GCfunc *fn = lj_lib_checkfunc(L, 1);
+  GCproto *pt = lj_lib_checkLproto(L, 1, 1);
   uint32_t flags = LJ_FR2*BCDUMP_F_FR2;
   SBuf *sb;
   TValue *o = L->base+1;
@@ -133,9 +133,9 @@ LJLIB_CF(string_dump)
       while ((c = *mode++)) {
         if (c == 's') flags |= BCDUMP_F_STRIP;
 #if LJ_FR2
-        if (c == 'W') flags &= ~(uint32_t)BCDUMP_F_FR2;
+        if (c == 'W' && tvisproto(o-1)) flags &= ~(uint32_t)BCDUMP_F_FR2;
 #else
-        if (c == 'X') flags |= BCDUMP_F_FR2;
+        if (c == 'X' && tvisproto(o-1)) flags |= BCDUMP_F_FR2;
 #endif
       }
     } else if (tvistruecond(o)) {
@@ -144,7 +144,7 @@ LJLIB_CF(string_dump)
   }
   sb = lj_buf_tmp_(L);  /* Assumes lj_bcwrite() doesn't use tmpbuf. */
   L->top = L->base+1;
-  if (!isluafunc(fn) || lj_bcwrite(L, funcproto(fn), writer_buf, sb, flags))
+  if (!pt || lj_bcwrite(L, pt, writer_buf, sb, flags))
     lj_err_caller(L, LJ_ERR_STRDUMP);
   setstrV(L, L->top-1, lj_buf_str(L, sb));
   lj_gc_check(L);

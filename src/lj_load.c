@@ -41,9 +41,13 @@ static TValue *cpparser(lua_State *L, lua_CFunction dummy, void *ud)
   if (ls->mode && strchr(ls->mode, LJ_FR2 ? 'W' : 'X'))
     ls->fr2 = !LJ_FR2;
   pt = bc ? lj_bcread(ls) : lj_parse(ls);
-  fn = lj_func_newL_empty(L, pt, tabref(L->env));
-  /* Don't combine above/below into one statement. */
-  setfuncV(L, L->top++, fn);
+  if (ls->fr2 == LJ_FR2) {
+    fn = lj_func_newL_empty(L, pt, tabref(L->env));
+    /* Don't combine above/below into one statement. */
+    setfuncV(L, L->top++, fn);
+  } else {
+    setprotoV(L, L->top++, pt);
+  }
   return NULL;
 }
 
