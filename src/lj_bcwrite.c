@@ -27,7 +27,7 @@ typedef struct BCWriteCtx {
   GCproto *pt;			/* Root prototype. */
   lua_Writer wfunc;		/* Writer callback. */
   void *wdata;			/* Writer callback data. */
-  int strip;			/* Strip debug info. */
+  uint32_t flags;		/* BCDUMP_F_* flags. */
   int status;			/* Status from writer callback. */
 #ifdef LUA_USE_ASSERT
   global_State *g;
@@ -269,7 +269,7 @@ static void bcwrite_proto(BCWriteCtx *ctx, GCproto *pt)
   p = lj_strfmt_wuleb128(p, pt->sizekgc);
   p = lj_strfmt_wuleb128(p, pt->sizekn);
   p = lj_strfmt_wuleb128(p, pt->sizebc-1);
-  if (!ctx->strip) {
+  if (!(ctx->flags & BCDUMP_F_STRIP)) {
     if (proto_lineinfo(pt))
       sizedbg = pt->sizept - (MSize)((char *)proto_lineinfo(pt) - (char *)pt);
     p = lj_strfmt_wuleb128(p, sizedbg);
@@ -317,11 +317,10 @@ static void bcwrite_header(BCWriteCtx *ctx)
   *p++ = BCDUMP_HEAD2;
   *p++ = BCDUMP_HEAD3;
   *p++ = BCDUMP_VERSION;
-  *p++ = (ctx->strip ? BCDUMP_F_STRIP : 0) +
+  *p++ = (ctx->flags & (BCDUMP_F_STRIP | BCDUMP_F_FR2)) +
 	 LJ_BE*BCDUMP_F_BE +
-	 ((ctx->pt->flags & PROTO_FFI) ? BCDUMP_F_FFI : 0) +
-	 LJ_FR2*BCDUMP_F_FR2;
-  if (!ctx->strip) {
+	 ((ctx->pt->flags & PROTO_FFI) ? BCDUMP_F_FFI : 0);
+  if (!(ctx->flags & BCDUMP_F_STRIP)) {
     p = lj_strfmt_wuleb128(p, len);
     p = lj_buf_wmem(p, name, len);
   }
@@ -352,14 +351,14 @@ static TValue *cpwriter(lua_State *L, lua_CFunction dummy, void *ud)
 
 /* Write bytecode for a prototype. */
 int lj_bcwrite(lua_State *L, GCproto *pt, lua_Writer writer, void *data,
-	      int strip)
+	      uint32_t flags)
 {
   BCWriteCtx ctx;
   int status;
   ctx.pt = pt;
   ctx.wfunc = writer;
   ctx.wdata = data;
-  ctx.strip = strip;
+  ctx.flags = flags;
   ctx.status = 0;
 #ifdef LUA_USE_ASSERT
   ctx.g = G(L);

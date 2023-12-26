@@ -38,6 +38,8 @@ static TValue *cpparser(lua_State *L, lua_CFunction dummy, void *ud)
     setstrV(L, L->top++, lj_err_str(L, LJ_ERR_XMODE));
     lj_err_throw(L, LUA_ERRSYNTAX);
   }
+  if (ls->mode && strchr(ls->mode, LJ_FR2 ? 'W' : 'X'))
+    ls->fr2 = !LJ_FR2;
   pt = bc ? lj_bcread(ls) : lj_parse(ls);
   fn = lj_func_newL_empty(L, pt, tabref(L->env));
   /* Don't combine above/below into one statement. */
@@ -159,9 +161,10 @@ LUALIB_API int luaL_loadstring(lua_State *L, const char *s)
 LUA_API int lua_dump(lua_State *L, lua_Writer writer, void *data)
 {
   cTValue *o = L->top-1;
+  uint32_t flags = LJ_FR2*BCDUMP_F_FR2;
   lj_checkapi(L->top > L->base, "top slot empty");
   if (tvisfunc(o) && isluafunc(funcV(o)))
-    return lj_bcwrite(L, funcproto(funcV(o)), writer, data, 0);
+    return lj_bcwrite(L, funcproto(funcV(o)), writer, data, flags);
   else
     return 1;
 }

@@ -186,10 +186,11 @@ works independently of the current locale and it supports hex floating-point
 numbers (e.g. <tt>0x1.5p-3</tt>).
 </p>
 
-<h3 id="string_dump"><tt>string.dump(f [,strip])</tt> generates portable bytecode</h3>
+<h3 id="string_dump"><tt>string.dump(f [,mode])</tt> generates portable bytecode</h3>
 <p>
 An extra argument has been added to <tt>string.dump()</tt>. If set to
-<tt>true</tt>, 'stripped' bytecode without debug information is
+<tt>true</tt>, or to a string which contains the character <tt>"s"</tt>
+anywhere, 'stripped' bytecode without debug information is
 generated. This speeds up later bytecode loading and reduces memory
 usage. See also the
 <a href="running.html#opt_b"><tt>-b</tt> command line option</a>.
@@ -204,8 +205,14 @@ bytecode (e.g. from Lua 5.1) is incompatible and cannot be loaded.
 </p>
 <p>
 Note: <tt>LJ_GC64</tt> mode requires a different frame layout, which implies
-a different, incompatible bytecode format for all 64 bit ports. This may be
-rectified in the future.
+a different, incompatible bytecode format between 32 bit and 64 bit ports.
+This may be rectified in the future. To explicitly generate 32 bit bytecode,
+include <tt>"W"</tt> in the mode string for both <tt>load</tt> / <tt>loadfile</tt> /
+<tt>loadstring</tt> and <tt>string.dump</tt>. To explicitly generate 64 bit
+bytecode, include <tt>"X"</tt> in the mode string for both <tt>load</tt> /
+<tt>loadfile</tt> / <tt>loadstring</tt> and <tt>string.dump</tt>. Native
+bytecode is generated if neither <tt>"W"</tt> nor <tt>"X"</tt> are specified,
+and non-native bytecode is generated if both are specified.
 </p>
 
 <h3 id="table_new"><tt>table.new(narray, nhash)</tt> allocates a pre-sized table</h3>
