@@ -204,6 +204,11 @@ minor releases (2.0 &rarr; 2.1) or between any beta release. Foreign
 bytecode (e.g. from Lua 5.1) is incompatible and cannot be loaded.
 </p>
 <p>
+Some bytecode constructs are emitted in a non-deterministic order by default.
+If <tt>"d"</tt> is included in the mode string, these constructs will instead
+be emitted in a deterministic order.
+</p>
+<p>
 Note: <tt>LJ_GC64</tt> mode requires a different frame layout, which implies
 a different, incompatible bytecode format between 32 bit and 64 bit ports.
 This may be rectified in the future. To explicitly generate 32 bit bytecode,

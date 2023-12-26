@@ -132,6 +132,7 @@ LJLIB_CF(string_dump)
       char c;
       while ((c = *mode++)) {
         if (c == 's') flags |= BCDUMP_F_STRIP;
+        if (c == 'd') flags |= BCDUMP_F_DETERMINISTIC;
 #if LJ_FR2
         if (c == 'W' && tvisproto(o-1)) flags &= ~(uint32_t)BCDUMP_F_FR2;
 #else

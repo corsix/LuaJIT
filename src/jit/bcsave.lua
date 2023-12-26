@@ -31,6 +31,7 @@ Save LuaJIT bytecode: luajit -b[options] input output
   -g        Keep debug info.
   -W        Generate 32 bit (non-GC64) bytecode.
   -X        Generate 64 bit (GC64) bytecode.
+  -d        Generate bytecode in deterministic manner.
   -n name   Set module name (default: auto-detect from input name).
   -t type   Set output file type (default: auto-detect from output name).
   -a arch   Override architecture for object files (default: native).
@@ -670,6 +671,8 @@ local function docmd(...)
 	  strip = ""
 	elseif opt == "W" or opt == "X" then
 	  gc64 = opt
+	elseif opt == "d" then
+	  ctx.mode = ctx.mode .. opt
 	else
 	  if arg[n] == nil or m ~= #a then usage() end
 	  if opt == "e" then

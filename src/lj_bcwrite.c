@@ -27,6 +27,8 @@ typedef struct BCWriteCtx {
   GCproto *pt;			/* Root prototype. */
   lua_Writer wfunc;		/* Writer callback. */
   void *wdata;			/* Writer callback data. */
+  TValue **sortbuf;		/* Buffer used for sorting. */
+  uint32_t sortsz;		/* Size of sortbuf. */
   uint32_t flags;		/* BCDUMP_F_* flags. */
   int status;			/* Status from writer callback. */
 #ifdef LUA_USE_ASSERT
@@ -76,6 +78,64 @@ static void bcwrite_ktabk(BCWriteCtx *ctx, cTValue *o, int narrow)
   ctx->sb.w = p;
 }
 
+/* Compare two keys from a template table. */
+static LJ_AINLINE int bcwrite_ktabk_lt(TValue *a, TValue *b)
+{
+  uint32_t at = itype(a), bt = itype(b);
+  if (at != bt) return at < bt;
+  if (at == LJ_TSTR) return lj_str_cmp(strV(a), strV(b)) < 0;
+  return LJ_GC64 ? a->u64 < b->u64 : a->u32.lo < b->u32.lo;
+}
+
+static void bcwrite_ktabk_heap_insert(TValue **heap, MSize idx, MSize end,
+				      TValue *key)
+{
+  MSize child;
+  while ((child = idx * 2 + 1) < end) {
+    TValue **children = heap + child, *c0 = children[0], *c1;
+    if ((child + 1) < end && bcwrite_ktabk_lt(c1 = children[1], c0))
+      c0 = c1, child += 1;
+    if (bcwrite_ktabk_lt(key, c0)) break;
+    heap[idx] = c0;
+    idx = child;
+  }
+  heap[idx] = key;
+}
+
+/* Write hash part of template table in sorted order. */
+static void bcwrite_ktab_sorted_hash(BCWriteCtx *ctx, Node *node, MSize nhash)
+{
+  TValue **heap = ctx->sortbuf;
+  /* Build heap. */
+  MSize i = nhash;
+  for (;; node--)
+    if (!tvisnil(&node->val)) {
+      bcwrite_ktabk_heap_insert(heap, --i, nhash, &node->key);
+      if (i == 0) break;
+    }
+  /* Drain heap. */
+  do {
+    TValue *key = heap[0];
+    bcwrite_ktabk(ctx, key, 0);
+    bcwrite_ktabk(ctx, (TValue*)((char*)key - offsetof(Node, key)), 1);
+    key = heap[--nhash];
+    bcwrite_ktabk_heap_insert(heap, 0, nhash, key);
+  } while (nhash);
+}
+
+static void bcwrite_sortbuf_resize(BCWriteCtx *ctx, uint32_t nsz)
+{
+  lua_State *L = sbufL(&ctx->sb);
+  if (ctx->sortsz) {
+    lj_mem_freevec(G(L), ctx->sortbuf, ctx->sortsz, TValue*);
+    ctx->sortsz = 0;
+  }
+  if (nsz) {
+    ctx->sortbuf = lj_mem_newvec(L, nsz, TValue*);
+    ctx->sortsz = nsz;
+  }
+}
+
 /* Write a template table. */
 static void bcwrite_ktab(BCWriteCtx *ctx, char *p, const GCtab *t)
 {
@@ -105,14 +165,20 @@ static void bcwrite_ktab(BCWriteCtx *ctx, char *p, const GCtab *t)
       bcwrite_ktabk(ctx, o, 1);
   }
   if (nhash) {  /* Write hash entries. */
-    MSize i = nhash;
     Node *node = noderef(t->node) + t->hmask;
-    for (;; node--)
-      if (!tvisnil(&node->val)) {
-	bcwrite_ktabk(ctx, &node->key, 0);
-	bcwrite_ktabk(ctx, &node->val, 1);
-	if (--i == 0) break;
-      }
+    if ((ctx->flags & BCDUMP_F_DETERMINISTIC) && (nhash > 1)) {
+      if (ctx->sortsz < nhash)
+	bcwrite_sortbuf_resize(ctx, t->hmask + 1);
+      bcwrite_ktab_sorted_hash(ctx, node, nhash);
+    } else {
+      MSize i = nhash;
+      for (;; node--)
+	if (!tvisnil(&node->val)) {
+	  bcwrite_ktabk(ctx, &node->key, 0);
+	  bcwrite_ktabk(ctx, &node->val, 1);
+	  if (--i == 0) break;
+	}
+    }
   }
 }
 
@@ -358,6 +424,7 @@ int lj_bcwrite(lua_State *L, GCproto *pt, lua_Writer writer, void *data,
   ctx.pt = pt;
   ctx.wfunc = writer;
   ctx.wdata = data;
+  ctx.sortsz = 0;
   ctx.flags = flags;
   ctx.status = 0;
 #ifdef LUA_USE_ASSERT
@@ -367,6 +434,7 @@ int lj_bcwrite(lua_State *L, GCproto *pt, lua_Writer writer, void *data,
   status = lj_vm_cpcall(L, NULL, &ctx, cpwriter);
   if (status == 0) status = ctx.status;
   lj_buf_free(G(sbufL(&ctx.sb)), &ctx.sb);
+  if (ctx.sortsz) bcwrite_sortbuf_resize(&ctx, 0);
   return status;
 }
 
