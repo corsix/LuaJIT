@@ -1327,9 +1327,12 @@ static void fs_fixup_bc(FuncState *fs, GCproto *pt, BCIns *bc, MSize n)
 {
   BCInsLine *base = fs->bcbase;
   MSize i;
+  BCIns op;
   pt->sizebc = n;
-  bc[0] = BCINS_AD((fs->flags & PROTO_VARARG) ? BC_FUNCV : BC_FUNCF,
-		   fs->framesize, 0);
+  if (fs->ls->fr2 != LJ_FR2) op = BC_NOT;
+  else if ((fs->flags & PROTO_VARARG)) op = BC_FUNCV;
+  else op = BC_FUNCF;
+  bc[0] = BCINS_AD(op, fs->framesize, 0);
   for (i = 1; i < n; i++)
     bc[i] = base[i].ins;
 }

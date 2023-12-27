@@ -425,6 +425,12 @@ int lj_bcwrite(lua_State *L, GCproto *pt, lua_Writer writer, void *data,
   ctx.wfunc = writer;
   ctx.wdata = data;
   ctx.sortsz = 0;
+#if LJ_FR2
+  if (bc_op(proto_bc(pt)[0]) != BC_NOT)
+#else
+  if (bc_op(proto_bc(pt)[0]) == BC_NOT)
+#endif
+    flags |= BCDUMP_F_FR2;
   ctx.flags = flags;
   ctx.status = 0;
 #ifdef LUA_USE_ASSERT

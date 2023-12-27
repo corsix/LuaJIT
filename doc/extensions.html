@@ -212,12 +212,14 @@ be emitted in a deterministic order.
 Note: <tt>LJ_GC64</tt> mode requires a different frame layout, which implies
 a different, incompatible bytecode format between 32 bit and 64 bit ports.
 This may be rectified in the future. To explicitly generate 32 bit bytecode,
-include <tt>"W"</tt> in the mode string for both <tt>load</tt> / <tt>loadfile</tt> /
-<tt>loadstring</tt> and <tt>string.dump</tt>. To explicitly generate 64 bit
-bytecode, include <tt>"X"</tt> in the mode string for both <tt>load</tt> /
-<tt>loadfile</tt> / <tt>loadstring</tt> and <tt>string.dump</tt>. Native
-bytecode is generated if neither <tt>"W"</tt> nor <tt>"X"</tt> are specified,
-and non-native bytecode is generated if both are specified.
+include <tt>"W"</tt> in the mode string for <tt>load</tt> / <tt>loadfile</tt> /
+<tt>loadstring</tt>. To explicitly generate 64 bit bytecode, include <tt>"X"</tt>
+in the mode string for <tt>load</tt> / <tt>loadfile</tt> / <tt>loadstring</tt>.
+Native bytecode is generated if neither <tt>"W"</tt> nor <tt>"X"</tt> are
+specified, and non-native bytecode is generated if both are specified. When
+non-native bytecode is generated, the result of <tt>load</tt> / <tt>loadfile</tt> /
+<tt>loadstring</tt> is not a callable function, but can still be passed to
+<tt>string.dump</tt>.
 </p>
 
 <h3 id="table_new"><tt>table.new(narray, nhash)</tt> allocates a pre-sized table</h3>

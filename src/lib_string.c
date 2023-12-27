@@ -123,7 +123,7 @@ static int writer_buf(lua_State *L, const void *p, size_t size, void *sb)
 LJLIB_CF(string_dump)
 {
   GCproto *pt = lj_lib_checkLproto(L, 1, 1);
-  uint32_t flags = LJ_FR2*BCDUMP_F_FR2;
+  uint32_t flags = 0;
   SBuf *sb;
   TValue *o = L->base+1;
   if (o < L->top) {
@@ -133,11 +133,6 @@ LJLIB_CF(string_dump)
       while ((c = *mode++)) {
         if (c == 's') flags |= BCDUMP_F_STRIP;
         if (c == 'd') flags |= BCDUMP_F_DETERMINISTIC;
-#if LJ_FR2
-        if (c == 'W' && tvisproto(o-1)) flags &= ~(uint32_t)BCDUMP_F_FR2;
-#else
-        if (c == 'X' && tvisproto(o-1)) flags |= BCDUMP_F_FR2;
-#endif
       }
     } else if (tvistruecond(o)) {
       flags |= BCDUMP_F_STRIP;

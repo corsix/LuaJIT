@@ -281,8 +281,11 @@ static void bcread_knum(LexState *ls, GCproto *pt, MSize sizekn)
 static void bcread_bytecode(LexState *ls, GCproto *pt, MSize sizebc)
 {
   BCIns *bc = proto_bc(pt);
-  bc[0] = BCINS_AD((pt->flags & PROTO_VARARG) ? BC_FUNCV : BC_FUNCF,
-		   pt->framesize, 0);
+  BCIns op;
+  if (ls->fr2 != LJ_FR2) op = BC_NOT;
+  else if ((pt->flags & PROTO_VARARG)) op = BC_FUNCV;
+  else op = BC_FUNCF;
+  bc[0] = BCINS_AD(op, pt->framesize, 0);
   bcread_block(ls, bc+1, (sizebc-1)*(MSize)sizeof(BCIns));
   /* Swap bytecode instructions if the endianess differs. */
   if (bcread_swap(ls)) {
