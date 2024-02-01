@@ -80,6 +80,17 @@ static void resizestack(lua_State *L, MSize n)
     setmref(gco2uv(up)->v, (TValue *)((char *)uvval(gco2uv(up)) + delta));
 }
 
+/* Prepare the stack for running an error handler. */
+void lj_state_efstack(lua_State *L) {
+  /* Error handlers are always allowed to grow the stack by 2*LUA_MINSTACK.
+  ** If doing so would push past LJ_STACK_MAX, then overdraw the limit.
+  ** If/when we unwind, lj_state_relimitstack will undo this.
+  */
+  if (L->stacksize > LJ_STACK_MAXEX-2*LUA_MINSTACK && L->stacksize <= LJ_STACK_MAXEX) {
+    resizestack(L, LJ_STACK_MAX + 2*LUA_MINSTACK);
+  }
+}
+
 /* Relimit stack after error, in case the limit was overdrawn. */
 void lj_state_relimitstack(lua_State *L)
 {
@@ -102,27 +113,35 @@ void lj_state_shrinkstack(lua_State *L, MSize used)
 /* Try to grow stack. */
 void LJ_FASTCALL lj_state_growstack(lua_State *L, MSize need)
 {
-  MSize n;
-  if (L->stacksize >= LJ_STACK_MAXEX) {
-    /* 4. Throw 'error in error handling' when we are _over_ the limit. */
-    if (L->stacksize > LJ_STACK_MAXEX)
-      lj_err_throw(L, LUA_ERRERR);  /* Does not invoke an error handler. */
-    /* 1. We are _at_ the limit after the last growth. */
-    if (L->status < LUA_ERRRUN) {  /* 2. Throw 'stack overflow'. */
-      L->status = LUA_ERRRUN;  /* Prevent ending here again for pushed msg. */
-      lj_err_msg(L, LJ_ERR_STKOV);  /* May invoke an error handler. */
+  MSize n = L->stacksize + need;
+  if (n < LJ_STACK_MAX) {
+    /* The stack can grow as requested. */
+    if (n < 2*L->stacksize) {
+      /* But we might benefit from growing it even more than requested. */
+      n = 2*L->stacksize;
+      if (n > LJ_STACK_MAX)
+	n = LJ_STACK_MAX;
     }
-    /* 3. Add space (over the limit) for pushed message and error handler. */
+    resizestack(L, n);
+  } else if (L->stacksize <= LJ_STACK_MAXEX) {
+    /* Growing the stack as requested would overflow it, so we'll raise a
+    ** stack overflow error here instead of growing the stack.
+    */
+    if (curr_funcisL(L) && curr_topL(L) > tvref(L->maxstack)) {
+      /* The current Lua frame violates the stack. Replace it with a dummy. */
+      L->top = L->base;
+      setframe_gc(L->base - 1 - LJ_FR2, obj2gco(L), LJ_TTHREAD);
+    }
+    lj_state_efstack(L);
+    lj_err_msg(L, LJ_ERR_STKOV);  /* May invoke an error handler. */
+  } else {
+    /* If we're here, then the stack overflow error handler is requesting to
+    ** grow the stack even further. We have no choice but to abort the
+    ** error handler.
+    */
+    setstrV(L, L->top++, lj_err_str(L, LJ_ERR_STKOV));
+    lj_err_throw(L, LUA_ERRERR);  /* Does not invoke an error handler. */
   }
-  n = L->stacksize + need;
-  if (n > LJ_STACK_MAX) {
-    n += 2*LUA_MINSTACK;
-  } else if (n < 2*L->stacksize) {
-    n = 2*L->stacksize;
-    if (n >= LJ_STACK_MAX)
-      n = LJ_STACK_MAX;
-  }
-  resizestack(L, n);
 }
 
 void LJ_FASTCALL lj_state_growstack1(lua_State *L)

@@ -14,6 +14,7 @@
 #define savestack(L, p)		((char *)(p) - mref(L->stack, char))
 #define restorestack(L, n)	((TValue *)(mref(L->stack, char) + (n)))
 
+LJ_FUNC void lj_state_efstack(lua_State *L);
 LJ_FUNC void lj_state_relimitstack(lua_State *L);
 LJ_FUNC void lj_state_shrinkstack(lua_State *L, MSize used);
 LJ_FUNCA void LJ_FASTCALL lj_state_growstack(lua_State *L, MSize need);

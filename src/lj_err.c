@@ -818,7 +818,14 @@ LJ_NOINLINE void lj_err_mem(lua_State *L)
     TValue *base = tvref(G(L)->jit_base);
     if (base) L->base = base;
   }
-  if (curr_funcisL(L)) L->top = curr_topL(L);
+  if (curr_funcisL(L)) {
+    L->top = curr_topL(L);
+    if (LJ_UNLIKELY(L->top > tvref(L->maxstack))) {
+      /* The current Lua frame violates the stack. Replace it with a dummy. */
+      L->top = L->base;
+      setframe_gc(L->base - 1 - LJ_FR2, obj2gco(L), LJ_TTHREAD);
+    }
+  }
   setstrV(L, L->top++, lj_err_str(L, LJ_ERR_ERRMEM));
   lj_err_throw(L, LUA_ERRMEM);
 }
@@ -879,7 +886,7 @@ LJ_NOINLINE void LJ_FASTCALL lj_err_run(lua_State *L)
 {
   ptrdiff_t ef = (LJ_HASJIT && tvref(G(L)->jit_base)) ? 0 : finderrfunc(L);
   if (ef) {
-    TValue *errfunc = restorestack(L, ef);
+    TValue *errfunc = (lj_state_efstack(L), restorestack(L, ef));
     TValue *top = L->top;
     lj_trace_abort(G(L));
     if (!tvisfunc(errfunc) || L->status == LUA_ERRERR) {
