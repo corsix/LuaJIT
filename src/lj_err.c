@@ -886,9 +886,11 @@ LJ_NOINLINE void LJ_FASTCALL lj_err_run(lua_State *L)
 {
   ptrdiff_t ef = (LJ_HASJIT && tvref(G(L)->jit_base)) ? 0 : finderrfunc(L);
   if (ef) {
-    TValue *errfunc = (lj_state_efstack(L), restorestack(L, ef));
-    TValue *top = L->top;
+    TValue *errfunc, *top;
+    lj_state_checkstack(L, LUA_MINSTACK * 2);  /* Might raise new error. */
     lj_trace_abort(G(L));
+    errfunc = restorestack(L, ef);
+    top = L->top;
     if (!tvisfunc(errfunc) || L->status == LUA_ERRERR) {
       setstrV(L, top-1, lj_err_str(L, LJ_ERR_ERRERR));
       lj_err_throw(L, LUA_ERRERR);
@@ -903,7 +905,15 @@ LJ_NOINLINE void LJ_FASTCALL lj_err_run(lua_State *L)
   lj_err_throw(L, LUA_ERRRUN);
 }
 
+/* Stack overflow error. */
+void LJ_FASTCALL lj_err_stkov(lua_State *L)
+{
+  lj_debug_addloc(L, err2msg(LJ_ERR_STKOV), L->base-1, NULL);
+  lj_err_run(L);
+}
+
 #if LJ_HASJIT
+/* Rethrow error after doing a trace exit. */
 LJ_NOINLINE void LJ_FASTCALL lj_err_trace(lua_State *L, int errcode)
 {
   if (errcode == LUA_ERRRUN)
